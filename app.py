@@ -164,26 +164,45 @@ except Exception as e:
 
 @tool
 def generate_diagram(diagram_type: str, title: str, description: str) -> str:
-    """図を自動生成してダウンロード用に保存します。
+    """実データを使って図を自動生成します。
+
+    description に以下のいずれかの形式で データを含めてください：
+    1. JSON形式: {"data": [値1, 値2, ...], "labels": ["ラベル1", "ラベル2", ...]}
+    2. テーブル形式:
+       ラベル1: 値1
+       ラベル2: 値2
+    3. リスト形式:
+       - ラベル1: 値1
+       - ラベル2: 値2
 
     Args:
-        diagram_type: 図の種類 ('flowchart', 'bar_chart', 'line_chart', 'network_diagram')
+        diagram_type: 図の種類 ('bar_chart', 'line_chart', 'flowchart', 'network_diagram')
         title: 図のタイトル
-        description: 図の説明や詳細情報
+        description: 図のデータと説明
 
     Returns:
         str: 生成された図の場所またはエラーメッセージ
     """
     try:
         print(f"[TOOL] generate_diagram called: type={diagram_type}, title={title}")
+        print(f"[TOOL] Description: {description[:200]}")
 
-        # 図の種類に応じたPythonコードを生成
+        # description からデータを抽出
+        data, labels = _extract_data_from_description(description)
+
+        if not data or not labels:
+            print(f"[TOOL] No data extracted from description")
+            return f"❌ データが見つかりません。description にデータを含めてください。"
+
+        print(f"[TOOL] Extracted data: {data}, labels: {labels}")
+
+        # 図の種類に応じたPythonコードを生成（実データを使用）
         if diagram_type == 'flowchart':
             code = _generate_flowchart_code(title, description)
         elif diagram_type == 'bar_chart':
-            code = _generate_bar_chart_code(title, description)
+            code = _generate_bar_chart_code_with_data(title, labels, data)
         elif diagram_type == 'line_chart':
-            code = _generate_line_chart_code(title, description)
+            code = _generate_line_chart_code_with_data(title, labels, data)
         elif diagram_type == 'network_diagram':
             code = _generate_network_diagram_code(title, description)
         else:
@@ -222,6 +241,103 @@ def generate_diagram(diagram_type: str, title: str, description: str) -> str:
         error_msg = f"❌ エラーが発生しました: {str(e)}"
         print(f"[TOOL] Exception: {error_msg}")
         return error_msg
+
+
+def _extract_data_from_description(description: str):
+    """description からデータを抽出"""
+    import json
+    import re
+
+    # JSON形式を試す
+    json_match = re.search(r'\{.*?"data".*?\}', description, re.DOTALL)
+    if json_match:
+        try:
+            data_dict = json.loads(json_match.group())
+            return data_dict.get("data", []), data_dict.get("labels", [])
+        except:
+            pass
+
+    # テーブル形式またはリスト形式を試す
+    labels = []
+    data = []
+
+    # パターン: "ラベル: 値" または "- ラベル: 値"
+    lines = description.split('\n')
+    for line in lines:
+        # リスト形式 "- ラベル: 値" または "ラベル: 値"
+        match = re.search(r'(?:-\s*)?([^:]+):\s*(\d+(?:\.\d+)?)', line)
+        if match:
+            label = match.group(1).strip()
+            value = float(match.group(2))
+            labels.append(label)
+            data.append(value)
+
+    if labels and data:
+        return data, labels
+
+    return [], []
+
+
+def _generate_bar_chart_code_with_data(title: str, labels: list, data: list) -> str:
+    """棒グラフのコードを生成（実データ使用）"""
+    title_escaped = title.replace("'", "\\'")
+
+    # Pythonリテラルに変換
+    labels_str = str(labels)
+    data_str = str(data)
+
+    code = f"""
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(10, 6))
+
+labels = {labels_str}
+values = {data_str}
+colors = ['#FF6B6B', '#4ECDC4', '#45B7D1', '#FFA07A', '#95E1D3', '#F38181', '#AA96DA', '#FCBAD3'][:len(labels)]
+
+ax.bar(labels, values, color=colors, edgecolor='black', linewidth=1.5)
+ax.set_ylabel('値', fontsize=12, fontweight='bold')
+ax.set_title('{title_escaped}', fontsize=14, fontweight='bold')
+ax.grid(axis='y', alpha=0.3, linestyle='--')
+
+for i, v in enumerate(values):
+    ax.text(i, v + max(values)*0.02, str(v), ha='center', fontweight='bold')
+
+plt.xticks(rotation=45, ha='right')
+plt.tight_layout()
+"""
+    return code
+
+
+def _generate_line_chart_code_with_data(title: str, labels: list, data: list) -> str:
+    """折れ線グラフのコードを生成（実データ使用）"""
+    title_escaped = title.replace("'", "\\'")
+
+    labels_str = str(labels)
+    data_str = str(data)
+
+    code = f"""
+import matplotlib.pyplot as plt
+
+fig, ax = plt.subplots(figsize=(10, 6))
+
+labels = {labels_str}
+values = {data_str}
+
+ax.plot(labels, values, marker='o', linewidth=2, markersize=8, color='#45B7D1')
+ax.fill_between(range(len(labels)), values, alpha=0.3, color='#45B7D1')
+
+ax.set_ylabel('値', fontsize=12, fontweight='bold')
+ax.set_title('{title_escaped}', fontsize=14, fontweight='bold')
+ax.grid(True, alpha=0.3, linestyle='--')
+
+for i, v in enumerate(values):
+    ax.text(i, v + max(values)*0.02, str(v), ha='center', fontweight='bold')
+
+plt.xticks(rotation=45, ha='right')
+plt.tight_layout()
+"""
+    return code
 
 
 def _generate_flowchart_code(title: str, description: str) -> str:
@@ -658,15 +774,12 @@ if prompt := st.chat_input("メッセージを入力してください"):
                 reverse=True
             )
 
-            # 直近 10 分以内に作成されたファイルのみ表示
-            import time
-            now = time.time()
+            # 最新の 1 個のファイルのみ表示
             recent_diagrams = []
-            for filename in diagram_files:
+            if diagram_files:
+                filename = diagram_files[0]
                 filepath = os.path.join(diagrams_dir, filename)
-                mtime = os.path.getmtime(filepath)
-                if now - mtime < 600:  # 10分以内
-                    recent_diagrams.append((filename, filepath))
+                recent_diagrams.append((filename, filepath))
 
             if recent_diagrams:
                 st.markdown("---")
