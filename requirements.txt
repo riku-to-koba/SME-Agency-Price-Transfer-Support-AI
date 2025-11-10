@@ -14,3 +14,9 @@ botocore
 
 # Web search functionality (Tavily API)
 tavily-python
+
+# Data visualization
+matplotlib
+numpy
+pandas
+pillow
