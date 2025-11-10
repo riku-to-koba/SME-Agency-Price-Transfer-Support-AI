@@ -1,0 +1,6 @@
+# Core dependencies
+strands-agents
+strands-agents-tools
+
+# Web search functionality (Tavily API)
+tavily-python
