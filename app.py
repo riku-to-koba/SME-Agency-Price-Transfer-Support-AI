@@ -11,7 +11,6 @@ import tempfile
 import os
 import re
 import uuid
-from pathlib import Path
 
 # イベントループのネスト許可
 nest_asyncio.apply()
@@ -23,7 +22,6 @@ if "session_id" not in st.session_state:
     st.session_state.session_id = str(uuid.uuid4())[:8]
 
 SESSION_ID = st.session_state.session_id
-print(f"[SESSION] Current session ID: {SESSION_ID}")
 
 # ============================================================================
 # 図生成ユーティリティ
@@ -184,17 +182,11 @@ def generate_diagram(diagram_type: str, title: str, description: str) -> str:
         str: 生成された図の場所またはエラーメッセージ
     """
     try:
-        print(f"[TOOL] generate_diagram called: type={diagram_type}, title={title}")
-        print(f"[TOOL] Description: {description[:200]}")
-
         # description からデータを抽出
         data, labels = _extract_data_from_description(description)
 
         if not data or not labels:
-            print(f"[TOOL] No data extracted from description")
             return f"❌ データが見つかりません。description にデータを含めてください。"
-
-        print(f"[TOOL] Extracted data: {data}, labels: {labels}")
 
         # 図の種類に応じたPythonコードを生成（実データを使用）
         if diagram_type == 'flowchart':
@@ -212,8 +204,6 @@ def generate_diagram(diagram_type: str, title: str, description: str) -> str:
         success, image_path, error = DiagramGenerator.generate(code, timeout=30)
 
         if success:
-            print(f"[TOOL] Success! Image path: {image_path}")
-
             # ダウンロード用に diagrams フォルダに保存
             download_dir = os.path.join(os.getcwd(), "diagrams")
             os.makedirs(download_dir, exist_ok=True)
@@ -226,21 +216,14 @@ def generate_diagram(diagram_type: str, title: str, description: str) -> str:
             # ファイルをコピー
             import shutil
             shutil.copy(image_path, download_path)
-            print(f"[TOOL] Copied to download folder: {download_path}")
 
             # 成功メッセージを返す
-            result = f"✅ 図を生成しました: {title}"
-            print(f"[TOOL] Returning: {result}")
-            return result
+            return f"✅ 図を生成しました: {title}"
         else:
-            error_result = f"❌ 図の生成に失敗しました: {error}"
-            print(f"[TOOL] Failed: {error}")
-            return error_result
+            return f"❌ 図の生成に失敗しました: {error}"
 
     except Exception as e:
-        error_msg = f"❌ エラーが発生しました: {str(e)}"
-        print(f"[TOOL] Exception: {error_msg}")
-        return error_msg
+        return f"❌ エラーが発生しました: {str(e)}"
 
 
 def _extract_data_from_description(description: str):
