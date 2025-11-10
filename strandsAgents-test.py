@@ -1,16 +1,19 @@
+import asyncio
+
 from strands import Agent, tool
 from strands.models import BedrockModel
 from strands_tools import current_time, calculator
 
-def strands_agent_chat():
+
+async def strands_agent_chat_streaming():
 
     # LLMの初期化
     bedrock_model = BedrockModel(
         model_id="jp.anthropic.claude-haiku-4-5-20251001-v1:0",
         region_name="ap-northeast-1",
         temperature=0.7,
-        max_tokens=2048,
-        streaming=False,
+        max_tokens=50000,
+        streaming=True,
     )
 
     system_prompt=\
@@ -26,7 +29,8 @@ def strands_agent_chat():
     agent = Agent(
         model=bedrock_model,
         tools=[current_time, calculator, web_search],
-        system_prompt=system_prompt
+        system_prompt=system_prompt,
+        callback_handler=None
     )
 
     while True:
@@ -38,8 +42,17 @@ def strands_agent_chat():
             break
 
         try:
-            response = agent(user_input)
-            print("\nアシスタント:", response)
+            print("\nアシスタント:")
+            agent_stream = agent.stream_async(user_input)
+            async for event in agent_stream:
+                if "data" in event:
+                    # 生成されたテキストチャンクを出力
+                    print(event["data"], end="", flush=True)
+                elif "current_tool_use" in event and event["current_tool_use"].get("name"):
+                    # ツール使用情報の出力
+                    print(f"\n[ツール使用情報: {event['current_tool_use']['name']}]")
+            print()  # 最後に改行を追加
+
         except Exception as e:
             print(f"エラーが発生しました: {str(e)}")
             print("もう一度お試しください。")
@@ -72,5 +85,5 @@ def web_search(query: str, max_results: int = 5) -> str:
         return f"検索エラー: {str(e)}"
 
 if __name__ == "__main__":
-    strands_agent_chat()
+    asyncio.run(strands_agent_chat_streaming())
 
