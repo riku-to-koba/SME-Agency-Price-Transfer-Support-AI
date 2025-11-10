@@ -16,6 +16,14 @@ from pathlib import Path
 # イベントループのネスト許可
 nest_asyncio.apply()
 
+# ============================================================================
+# セッション管理
+# ============================================================================
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())[:8]
+
+SESSION_ID = st.session_state.session_id
+print(f"[SESSION] Current session ID: {SESSION_ID}")
 
 # ============================================================================
 # 図生成ユーティリティ
@@ -191,10 +199,10 @@ def generate_diagram(diagram_type: str, title: str, description: str) -> str:
             download_dir = os.path.join(os.getcwd(), "diagrams")
             os.makedirs(download_dir, exist_ok=True)
 
-            # ファイル名を作成（タイトルをサニタイズ）
+            # ファイル名を作成（タイトルをサニタイズ + セッションID）
             safe_title = "".join(c for c in title if c.isalnum() or c in " -_").strip()
             safe_title = safe_title[:50]  # 長さ制限
-            download_path = os.path.join(download_dir, f"{safe_title}_{uuid.uuid4().hex[:8]}.png")
+            download_path = os.path.join(download_dir, f"{SESSION_ID}_{safe_title}_{uuid.uuid4().hex[:8]}.png")
 
             # ファイルをコピー
             import shutil
@@ -640,11 +648,12 @@ if prompt := st.chat_input("メッセージを入力してください"):
         # アシスタントメッセージを履歴に追加
         st.session_state.messages.append({"role": "assistant", "content": display_response})
 
-        # diagrams フォルダから最新の図を取得してダウンロードボタンを表示
+        # diagrams フォルダから現在のセッションの図を取得して表示・ダウンロード
         diagrams_dir = os.path.join(os.getcwd(), "diagrams")
         if os.path.exists(diagrams_dir):
+            # セッションIDが含まれたファイルのみを取得
             diagram_files = sorted(
-                [f for f in os.listdir(diagrams_dir) if f.endswith('.png')],
+                [f for f in os.listdir(diagrams_dir) if f.startswith(SESSION_ID) and f.endswith('.png')],
                 key=lambda x: os.path.getmtime(os.path.join(diagrams_dir, x)),
                 reverse=True
             )
@@ -661,17 +670,7 @@ if prompt := st.chat_input("メッセージを入力してください"):
 
             if recent_diagrams:
                 st.markdown("---")
-                st.subheader("📊 生成された図をダウンロード")
+                st.subheader("📊 生成された図")
                 for filename, filepath in recent_diagrams:
-                    col1, col2 = st.columns([4, 1])
-                    with col1:
-                        st.write(f"• {filename}")
-                    with col2:
-                        with open(filepath, 'rb') as f:
-                            st.download_button(
-                                label="📥 DL",
-                                data=f.read(),
-                                file_name=filename,
-                                mime="image/png",
-                                key=filepath
-                            )
+                    # 図を表示
+                    st.image(filepath, caption=filename)
