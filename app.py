@@ -10,9 +10,12 @@ import subprocess
 import tempfile
 import os
 import re
+import uuid
+from pathlib import Path
 
 # イベントループのネスト許可
 nest_asyncio.apply()
+
 
 # ============================================================================
 # 図生成ユーティリティ
@@ -153,7 +156,7 @@ except Exception as e:
 
 @tool
 def generate_diagram(diagram_type: str, title: str, description: str) -> str:
-    """図を自動生成します。
+    """図を自動生成してダウンロード用に保存します。
 
     Args:
         diagram_type: 図の種類 ('flowchart', 'bar_chart', 'line_chart', 'network_diagram')
@@ -161,7 +164,7 @@ def generate_diagram(diagram_type: str, title: str, description: str) -> str:
         description: 図の説明や詳細情報
 
     Returns:
-        str: 図を生成した場合は成功メッセージと画像パス、失敗した場合はエラーメッセージ
+        str: 生成された図の場所またはエラーメッセージ
     """
     try:
         print(f"[TOOL] generate_diagram called: type={diagram_type}, title={title}")
@@ -183,8 +186,23 @@ def generate_diagram(diagram_type: str, title: str, description: str) -> str:
 
         if success:
             print(f"[TOOL] Success! Image path: {image_path}")
-            # 応答に画像パスを含める（タグでマーク）
-            result = f"✅ 図を生成しました: {title}\n[DIAGRAM_IMAGE]{image_path}[/DIAGRAM_IMAGE]"
+
+            # ダウンロード用に diagrams フォルダに保存
+            download_dir = os.path.join(os.getcwd(), "diagrams")
+            os.makedirs(download_dir, exist_ok=True)
+
+            # ファイル名を作成（タイトルをサニタイズ）
+            safe_title = "".join(c for c in title if c.isalnum() or c in " -_").strip()
+            safe_title = safe_title[:50]  # 長さ制限
+            download_path = os.path.join(download_dir, f"{safe_title}_{uuid.uuid4().hex[:8]}.png")
+
+            # ファイルをコピー
+            import shutil
+            shutil.copy(image_path, download_path)
+            print(f"[TOOL] Copied to download folder: {download_path}")
+
+            # 成功メッセージを返す
+            result = f"✅ 図を生成しました: {title}"
             print(f"[TOOL] Returning: {result}")
             return result
         else:
@@ -615,26 +633,45 @@ if prompt := st.chat_input("メッセージを入力してください"):
 
         full_response = loop.run_until_complete(stream_response())
 
-        # 応答から画像パスを抽出
-        import re as regex_module
-        diagram_matches = regex_module.findall(r'\[DIAGRAM_IMAGE\](.+?)\[/DIAGRAM_IMAGE\]', full_response)
-
         # 応答テキストから画像タグを除去
+        import re as regex_module
         display_response = regex_module.sub(r'\[DIAGRAM_IMAGE\].+?\[/DIAGRAM_IMAGE\]', '', full_response).strip()
 
-        # アシスタントメッセージを履歴に追加（タグは除去）
+        # アシスタントメッセージを履歴に追加
         st.session_state.messages.append({"role": "assistant", "content": display_response})
 
-        # 抽出した画像があれば表示
-        if diagram_matches:
-            st.markdown("---")
-            st.subheader("📊 生成された図")
-            for image_path in diagram_matches:
-                clean_path = image_path.strip()
-                print(f"[DEBUG] Attempting to display image: {clean_path}")
-                if os.path.exists(clean_path):
-                    st.image(clean_path)
-                    print(f"[DISPLAY] Successfully displayed image: {clean_path}")
-                else:
-                    st.error(f"画像ファイルが見つかりません: {clean_path}")
-                    print(f"[ERROR] Image not found: {clean_path}")
+        # diagrams フォルダから最新の図を取得してダウンロードボタンを表示
+        diagrams_dir = os.path.join(os.getcwd(), "diagrams")
+        if os.path.exists(diagrams_dir):
+            diagram_files = sorted(
+                [f for f in os.listdir(diagrams_dir) if f.endswith('.png')],
+                key=lambda x: os.path.getmtime(os.path.join(diagrams_dir, x)),
+                reverse=True
+            )
+
+            # 直近 10 分以内に作成されたファイルのみ表示
+            import time
+            now = time.time()
+            recent_diagrams = []
+            for filename in diagram_files:
+                filepath = os.path.join(diagrams_dir, filename)
+                mtime = os.path.getmtime(filepath)
+                if now - mtime < 600:  # 10分以内
+                    recent_diagrams.append((filename, filepath))
+
+            if recent_diagrams:
+                st.markdown("---")
+                st.subheader("📊 生成された図をダウンロード")
+                for filename, filepath in recent_diagrams:
+                    col1, col2 = st.columns([4, 1])
+                    with col1:
+                        st.write(f"• {filename}")
+                    with col2:
+                        with open(filepath, 'rb') as f:
+                            st.download_button(
+                                label="📥 DL",
+                                data=f.read(),
+                                file_name=filename,
+                                mime="image/png",
+                                key=filepath
+                            )
