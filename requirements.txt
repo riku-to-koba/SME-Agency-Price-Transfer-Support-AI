@@ -2,5 +2,15 @@
 strands-agents
 strands-agents-tools
 
+# Web UI framework
+streamlit
+
+# Async event loop support
+nest-asyncio
+
+# AWS Bedrock SDK
+boto3
+botocore
+
 # Web search functionality (Tavily API)
 tavily-python

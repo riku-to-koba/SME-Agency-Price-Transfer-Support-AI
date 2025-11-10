@@ -1,4 +1,6 @@
 import asyncio
+import json
+import boto3
 import nest_asyncio
 import streamlit as st
 from strands import Agent, tool
@@ -37,6 +39,113 @@ def web_search(query: str, max_results: int = 5) -> str:
         return f"検索エラー: {str(e)}"
 
 
+@tool
+def search_knowledge_base(query: str, max_results: int = 5) -> str:
+    """Knowledge Baseから詳細情報を検索します。
+    
+    Args:
+        query: 検索クエリ
+        max_results: 最大検索結果数（デフォルト: 5）
+    
+    Returns:
+        str: 検索結果のJSON文字列
+    """
+    try:
+        print(f"Start search in Knowledge Base for query: {query}")
+        knowledge_base_id = '7SM8UQNQFL'
+        region = 'ap-northeast-1'
+
+        # bedrock-agent-runtimeクライアントを使用
+        bedrock_agent_client = boto3.client(
+            service_name='bedrock-agent-runtime',
+            region_name=region
+        )
+
+        # Retrieve API を使用してナレッジベースから関連文書を取得
+        retrieve_params = {
+            'knowledgeBaseId': knowledge_base_id,
+            'retrievalQuery': {
+                'text': query
+            },
+            'retrievalConfiguration': {
+                'vectorSearchConfiguration': {
+                    'numberOfResults': max_results,
+                    'overrideSearchType': 'SEMANTIC'
+                }
+            }
+        }
+        
+        response = bedrock_agent_client.retrieve(**retrieve_params)
+        
+        # 結果を整理
+        results = []
+        for idx, result in enumerate(response.get('retrievalResults', []), 1):
+            content = result.get('content', {}).get('text', '')
+            score = result.get('score', 0)
+            location = result.get('location', {})
+            metadata = result.get('metadata', {})
+            
+            # ファイル名を取得
+            file_name = '不明'
+            uri = ''
+            
+            if 's3Location' in location:
+                s3_location = location.get('s3Location', {})
+                uri = s3_location.get('uri', '')
+                if uri:
+                    file_name = uri.split('/')[-1]
+            
+            if location.get('type') == 'S3':
+                uri = location.get('s3Location', {}).get('uri', '')
+                if uri:
+                    file_name = uri.split('/')[-1]
+            
+            if file_name == '不明' and metadata:
+                for key in ['x-amz-bedrock-kb-source-uri', 'source', 'file', 'document']:
+                    if key in metadata:
+                        source_info = metadata[key]
+                        if isinstance(source_info, str) and source_info:
+                            file_name = source_info.split('/')[-1]
+                            uri = source_info
+                            break
+            
+            result_info = {
+                'index': idx,
+                'content': content,
+                'score': round(score, 4),
+                'source': {
+                    'file_name': file_name,
+                    'uri': uri
+                }
+            }
+            results.append(result_info)
+        
+        print(f"finish search in Knowledge Base, found {len(results)} results.")
+        
+        # フォーマット済みテキストとして返す
+        formatted_text = f"【Knowledge Base検索結果】\n"
+        formatted_text += f"検索クエリ: {query}\n"
+        formatted_text += f"結果件数: {len(results)}件\n\n"
+        
+        for result in results:
+            formatted_text += f"--- 結果 {result['index']} ---\n"
+            formatted_text += f"【出典】ファイル名: {result['source']['file_name']}\n"
+            formatted_text += f"スコア: {result['score']}\n"
+            formatted_text += f"【内容】\n{result['content'][:500]}...\n"
+            if result['source']['uri']:
+                formatted_text += f"URI: {result['source']['uri']}\n"
+            formatted_text += "\n"
+        
+        return formatted_text
+        
+    except Exception as e:
+        return json.dumps({
+            'success': False,
+            'query': query,
+            'error': str(e),
+            'results': []
+        }, ensure_ascii=False)
+
 # エージェントの初期化（キャッシュ）
 @st.cache_resource
 def initialize_agent():
@@ -58,7 +167,7 @@ def initialize_agent():
 
     agent = Agent(
         model=bedrock_model,
-        tools=[current_time, calculator, web_search],
+        tools=[current_time, calculator, web_search, search_knowledge_base],
         system_prompt=system_prompt,
         callback_handler=None
     )
@@ -111,6 +220,7 @@ if prompt := st.chat_input("メッセージを入力してください"):
         async def stream_response():
             full_response = ""
             has_content = False
+            current_tool = None  # 現在使用中のツールを追跡
             try:
                 agent_stream = st.session_state.agent.stream_async(prompt)
                 async for event in agent_stream:
@@ -122,13 +232,15 @@ if prompt := st.chat_input("メッセージを入力してください"):
                         full_response += event["data"]
                         response_placeholder.markdown(full_response + "▌")
                     elif "current_tool_use" in event and event["current_tool_use"].get("name"):
-                        # ツール使用情報の表示
+                        # ツール使用情報の表示（同じツールの場合は1回だけ）
                         tool_name = event["current_tool_use"]["name"]
-                        tool_msg = f"\n\n*[{tool_name} を使用中]*\n\n"
-                        if not has_content:
-                            has_content = True
-                        full_response += tool_msg
-                        response_placeholder.markdown(full_response + "▌")
+                        if tool_name != current_tool:
+                            current_tool = tool_name
+                            tool_msg = f"\n\n*[{tool_name} を使用中]*\n\n"
+                            if not has_content:
+                                has_content = True
+                            full_response += tool_msg
+                            response_placeholder.markdown(full_response + "▌")
 
                 # 最終表示（カーソルを削除）
                 response_placeholder.markdown(full_response)
