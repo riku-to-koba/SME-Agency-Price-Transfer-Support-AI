@@ -619,13 +619,13 @@ def initialize_agent():
         streaming=True,
     )
 
-    system_prompt = """あなたは親切で知識豊富なAIアシスタントです。
+    system_prompt = """あなたは親切で知識豊富な価格転嫁支援用のAIアシスタントです。
+価格転嫁を考えている事業者に対して、的確なアドバイスをすることがあなたの目的です。
 
 簡潔で分かりやすい回答を心がけてください。
-質問に対して、あなたの知識範囲内で即座に回答してください。
+価格転嫁についての質問に対して、基本はナレッジベース検索そしてWEB検索から信頼性のある情報を取得して回答するようにしてください。
 
-もし最新情報や特定の社内情報が必要な場合は、
-「より詳しい情報を検索します」と明示してください。"""
+"""
 
     agent = Agent(
         model=bedrock_model,
@@ -649,6 +649,7 @@ with col2:
     if st.button("履歴クリア", type="secondary"):
         st.session_state.messages = []
         st.session_state.agent = initialize_agent()
+        del st.session_state.session_id
         st.rerun()
 
 st.markdown("---")
