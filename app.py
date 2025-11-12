@@ -40,9 +40,10 @@ with col1:
     st.title("価格転嫁支援AIアシスタント")
 with col2:
     if st.button("履歴クリア", type="secondary"):
-        st.session_state.messages = []
-        st.session_state.agent = initialize_agent()
-        del st.session_state.session_id
+        # セッション状態を完全にクリア
+        st.session_state.clear()
+        # キャッシュもクリア（エージェントの再生成を強制）
+        st.cache_resource.clear()
         st.rerun()
 
 st.markdown("---")
@@ -52,6 +53,28 @@ st.markdown("---")
 # ============================================================================
 if "messages" not in st.session_state:
     st.session_state.messages = []
+    # 初回アクセス時にウェルカムメッセージを追加
+    welcome_message = """こんにちは！価格転嫁支援AIアシスタントです。
+
+私は中小企業の皆様の価格転嫁をサポートするために設計されました。
+
+**できること:**
+- 価格転嫁プロセス（準備編・実践編）の各ステップについてアドバイス
+- 原価計算や見積書作成などの具体的な手順の説明
+- 業界動向や事例の検索
+- データの可視化（グラフ作成）
+
+**使い方:**
+お困りのことや知りたいことを、お気軽にご質問ください。
+例: 「原価計算のやり方を教えて」「見積書の作り方は？」「業界の価格転嫁動向を知りたい」
+
+どのようなことでお手伝いできますか？"""
+
+    st.session_state.messages.append({
+        "role": "assistant",
+        "content": welcome_message
+    })
+
 if "agent" not in st.session_state:
     st.session_state.agent = initialize_agent()
 
