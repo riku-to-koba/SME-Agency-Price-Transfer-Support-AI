@@ -3,7 +3,8 @@ from strands import Agent
 from strands.models import BedrockModel
 from strands_tools import current_time, calculator
 from tools.diagram_generator import generate_diagram
-from tools.search_tools import web_search, search_knowledge_base
+from tools.web_search import web_search
+from tools.knowledge_base import search_knowledge_base
 from tools.step_detector import detect_current_step
 from .prompts import MAIN_SYSTEM_PROMPT, get_step_prompt
 

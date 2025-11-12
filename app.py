@@ -22,9 +22,8 @@ SESSION_ID = st.session_state.session_id
 # ============================================================================
 # エージェント初期化
 # ============================================================================
-@st.cache_resource
 def initialize_agent():
-    """エージェントを初期化（キャッシュ）"""
+    """エージェントを初期化"""
     return PriceTransferAgent()
 
 
@@ -43,8 +42,6 @@ with col2:
     if st.button("履歴クリア", type="secondary"):
         # セッション状態を完全にクリア
         st.session_state.clear()
-        # キャッシュもクリア（エージェントの再生成を強制）
-        st.cache_resource.clear()
         st.rerun()
 
 st.markdown("---")
@@ -152,18 +149,39 @@ if prompt := st.chat_input("メッセージを入力してください"):
                         tool_use = event.get("tool_use", {})
                         if tool_use.get("name") == "detect_current_step":
                             tool_result = event.get("tool_result", "")
+                            print("\n" + "="*80)
+                            print("🎯 [UI] detect_current_step ツール結果を検知")
+                            print(f"📦 ツール結果: {tool_result}")
+                            print("="*80 + "\n")
+
                             try:
                                 # JSON形式の結果をパース
+                                print("🔧 [UI] JSONパース中...")
                                 result_data = json.loads(tool_result)
                                 detected_step = result_data.get("step")
+                                confidence = result_data.get("confidence", "不明")
+                                reasoning = result_data.get("reasoning", "理由なし")
+
+                                print(f"📊 判定結果:")
+                                print(f"   - ステップ: {detected_step}")
+                                print(f"   - 信頼度: {confidence}")
+                                print(f"   - 理由: {reasoning}\n")
 
                                 # ステップが有効な場合のみ更新
                                 if detected_step and detected_step != "UNKNOWN":
+                                    print(f"✅ [UI] ステップを更新: {detected_step}")
                                     st.session_state.current_step = detected_step
                                     # エージェントを再初期化
-                                    st.session_state.agent.update_step(detected_step)
-                            except (json.JSONDecodeError, AttributeError):
+                                    update_result = st.session_state.agent.update_step(detected_step)
+                                    if update_result:
+                                        print(f"✅ [UI] エージェント再初期化完了\n")
+                                    else:
+                                        print(f"⚠️  [UI] エージェントは既に同じステップです\n")
+                                else:
+                                    print(f"⚠️  [UI] ステップはUNKNOWN - 更新しません\n")
+                            except (json.JSONDecodeError, AttributeError) as e:
                                 # JSONパースエラーは無視
+                                print(f"❌ [UI] JSONパースエラー: {str(e)}\n")
                                 pass
 
                 # 最終表示（[IMAGE_PATH:...] を除いたテキストを表示）

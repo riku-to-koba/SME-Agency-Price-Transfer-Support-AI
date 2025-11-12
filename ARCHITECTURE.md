@@ -135,19 +135,25 @@ graph TB
 
     subgraph ツール層
         DIAGRAM[tools/diagram_generator.py<br/>図生成ツール<br/>・matplotlib実行<br/>・データ抽出]
-        SEARCH[tools/search_tools.py<br/>検索ツール<br/>・Web検索<br/>・KB検索]
+        WEB[tools/web_search.py<br/>Web検索<br/>・Tavily API<br/>・AI信頼性判定]
+        KB[tools/knowledge_base.py<br/>Knowledge Base検索<br/>・セマンティック検索]
+        DETECTOR[tools/step_detector.py<br/>ステップ判定<br/>・LLMベース判定]
     end
 
     APP --> CORE
     CORE --> PROMPT
     CORE --> DIAGRAM
-    CORE --> SEARCH
+    CORE --> WEB
+    CORE --> KB
+    CORE --> DETECTOR
 
     style APP fill:#E0F7FA
     style CORE fill:#C8E6C9
     style PROMPT fill:#FFF9C4
     style DIAGRAM fill:#B3E5FC
-    style SEARCH fill:#B3E5FC
+    style WEB fill:#B3E5FC
+    style KB fill:#B3E5FC
+    style DETECTOR fill:#B3E5FC
 ```
 
 ## ステップ判定の柔軟性
@@ -192,3 +198,107 @@ graph TD
 ### 4. セッション状態の活用
 - `current_step` でステップを管理
 - 会話中にステップが変わっても対応可能
+
+---
+
+## ツール詳細
+
+### `web_search` (tools/web_search.py)
+**目的**: Web検索を実行し、AI判定により信頼できる情報源のみを表示
+
+**機能**:
+- Tavily APIを使用したWeb検索
+- **AI信頼性判定機能**: Claude Haikuが各検索結果のURL、タイトル、コンテンツを評価
+- 信頼できる公的機関（政府機関、自治体、支援機関など）のソースのみフィルタリング
+- ソース種別を自動分類（政府機関/公的機関/学術機関/メディア）
+- 最大5件の検索結果を取得
+
+**AI信頼性判定の仕組み**:
+1. Tavily APIで検索結果を取得（多めに取得）
+2. 各結果に対して`is_trusted_source_ai()`を実行
+3. Claude Haikuが以下を判定:
+   - 信頼性の可否（is_trusted）
+   - 判定理由（reasoning）
+   - ソース種別（source_type）
+4. 信頼できると判定された結果のみを返却
+
+**判定基準**:
+- ✅ 信頼できる: 政府機関(.go.jp)、地方自治体(.lg.jp)、公的支援機関、大学・研究機関(.ac.jp)、信頼できる業界団体
+- ❌ 信頼できない: 個人ブログ、アフィリエイトサイト、まとめサイト、広告目的サイト
+
+### `search_knowledge_base` (tools/knowledge_base.py)
+**目的**: AWS Bedrock Knowledge Baseから価格転嫁関連情報を検索
+
+**機能**:
+- ナレッジベースID: `7SM8UQNQFL` (ap-northeast-1)
+- セマンティック検索（ベクトル検索）
+- 最大5件の結果を取得
+- 出典ファイル名とスコアを表示
+- S3ロケーションから元ファイルを特定
+
+**使用場面**:
+- Knowledge Baseを最優先で使用
+- 公式ガイドラインや価格転嫁事例を検索
+- 具体的な手順やチェックリストの取得
+
+### `detect_current_step` (tools/step_detector.py)
+**目的**: ユーザーの質問から価格転嫁プロセスのステップを自動判定
+
+**機能**:
+- Claude Haikuを使用したLLMベース判定
+- STEP 0 (CHECK 1〜8) および STEP 1〜5 に対応
+- 判定理由と信頼度（high/medium/low）を返却
+- 詳細なデバッグログ機能
+
+**判定フロー**:
+1. ユーザーの質問内容を分析
+2. 価格転嫁プロセスの各ステップ定義と照合
+3. 最も関連性の高いステップを判定
+4. JSON形式で結果を返却: `{"step": "STEP_0_CHECK_3", "confidence": "high", "reasoning": "..."}`
+
+### `generate_diagram` (tools/diagram_generator.py)
+**目的**: データを可視化する図を自動生成
+
+**機能**:
+- 4種類の図に対応: 棒グラフ、折れ線グラフ、フローチャート、ネットワーク図
+- description からデータを自動抽出（JSON形式、テーブル形式、リスト形式）
+- 生成された図は `diagrams/` フォルダに保存
+- UI上で最新の図を自動表示
+- 日本語フォント対応（Windows/macOS/Linux）
+
+**使用場面**:
+- 原価構造の可視化（STEP 0 - CHECK 3）
+- 価格推移のグラフ化
+- プロセスフローの図示
+
+---
+
+## データフロー: Web検索（AI信頼性判定付き）
+
+```mermaid
+sequenceDiagram
+    participant Agent as エージェント
+    participant WebTool as web_search
+    participant Tavily as Tavily API
+    participant AIJudge as AI信頼性判定
+    participant Haiku as Claude Haiku
+
+    Agent->>WebTool: クエリで検索実行
+    WebTool->>Tavily: 検索リクエスト（多めに取得）
+    Tavily-->>WebTool: 検索結果（複数件）
+
+    loop 各検索結果
+        WebTool->>AIJudge: URL, タイトル, コンテンツ
+        AIJudge->>Haiku: 信頼性判定プロンプト
+        Haiku-->>AIJudge: JSON判定結果
+        AIJudge-->>WebTool: is_trusted, reasoning, source_type
+
+        alt 信頼できる
+            WebTool->>WebTool: 結果をフィルタリング済みリストに追加
+        else 信頼できない
+            WebTool->>WebTool: 除外（理由をログ出力）
+        end
+    end
+
+    WebTool-->>Agent: 信頼できる結果のみ返却
+```

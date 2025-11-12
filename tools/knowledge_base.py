@@ -1,43 +1,7 @@
-"""検索ツール（Web検索とKnowledge Base検索）"""
+"""Knowledge Base検索ツール（AWS Bedrock Knowledge Base）"""
 import json
 import boto3
 from strands import tool
-
-
-@tool
-def web_search(query: str, max_results: int = 5) -> str:
-    """Web検索を実行（Tavily API）
-
-    Args:
-        query: 検索クエリ
-        max_results: 最大検索結果数（デフォルト: 5）
-
-    Returns:
-        str: 検索結果のテキスト
-    """
-    try:
-        from tavily import TavilyClient
-        tavily_client = TavilyClient(api_key="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")
-        response = tavily_client.search(
-            query=query,
-            max_results=max_results,
-            search_depth="advanced",
-            include_answer=True,
-        )
-
-        result_text = f"【検索クエリ】: {query}\n\n"
-        if response.get("answer"):
-            result_text += f"【AI回答】: {response['answer']}\n\n"
-
-        result_text += "【検索結果】:\n"
-        for i, result in enumerate(response.get("results", []), 1):
-            result_text += f"\n{i}. {result['title']}\n"
-            result_text += f"   URL: {result['url']}\n"
-            result_text += f"   {result['content'][:200]}...\n"
-
-        return result_text
-    except Exception as e:
-        return f"検索エラー: {str(e)}"
 
 
 @tool
@@ -49,7 +13,7 @@ def search_knowledge_base(query: str, max_results: int = 5) -> str:
         max_results: 最大検索結果数（デフォルト: 5）
 
     Returns:
-        str: 検索結果のJSON文字列
+        str: 検索結果のフォーマット済みテキスト
     """
     try:
         print(f"Start search in Knowledge Base for query: {query}")
