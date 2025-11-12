@@ -5,6 +5,7 @@ import streamlit as st
 import os
 import re
 import uuid
+import json
 from agent.core import PriceTransferAgent
 
 # イベントループのネスト許可
@@ -78,6 +79,9 @@ if "messages" not in st.session_state:
 if "agent" not in st.session_state:
     st.session_state.agent = initialize_agent()
 
+if "current_step" not in st.session_state:
+    st.session_state.current_step = None
+
 # ============================================================================
 # チャット履歴の表示
 # ============================================================================
@@ -143,6 +147,24 @@ if prompt := st.chat_input("メッセージを入力してください"):
                             full_response += tool_msg
                             display_response = re.sub(r'\[IMAGE_PATH:[^\]]*\]', '', full_response).strip()
                             response_placeholder.markdown(display_response + "▌")
+                    elif "tool_result" in event:
+                        # ツール結果を検知してステップ判定を処理
+                        tool_use = event.get("tool_use", {})
+                        if tool_use.get("name") == "detect_current_step":
+                            tool_result = event.get("tool_result", "")
+                            try:
+                                # JSON形式の結果をパース
+                                result_data = json.loads(tool_result)
+                                detected_step = result_data.get("step")
+
+                                # ステップが有効な場合のみ更新
+                                if detected_step and detected_step != "UNKNOWN":
+                                    st.session_state.current_step = detected_step
+                                    # エージェントを再初期化
+                                    st.session_state.agent.update_step(detected_step)
+                            except (json.JSONDecodeError, AttributeError):
+                                # JSONパースエラーは無視
+                                pass
 
                 # 最終表示（[IMAGE_PATH:...] を除いたテキストを表示）
                 display_response = re.sub(r'\[IMAGE_PATH:[^\]]*\]', '', full_response).strip()
