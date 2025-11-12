@@ -4,8 +4,9 @@
 
 ```mermaid
 graph TB
-    User[ユーザー<br/>中小企業担当者] -->|質問入力| UI[Streamlit UI<br/>app.py]
-    UI -->|質問を送信| Agent[PriceTransferAgent<br/>agent/core.py]
+    User[ユーザー<br/>中小企業担当者] -->|質問入力| UI[React UI<br/>frontend/src/App.tsx]
+    UI -->|HTTP POST| API[FastAPI<br/>api/main.py]
+    API -->|質問を送信| Agent[PriceTransferAgent<br/>agent/core.py]
 
     Agent -->|質問分析| Detect{ステップ判定<br/>必要に応じてヒアリング}
     Detect -->|判定結果| Update[セッション状態更新<br/>current_step設定]
@@ -23,7 +24,8 @@ graph TB
     Calc --> Response
     Diagram --> Response
 
-    Response -->|ストリーミング応答| UI
+    Response -->|SSEストリーミング| API
+    API -->|SSEストリーミング| UI
     UI -->|表示| User
 
     style User fill:#FFE4B5
@@ -41,13 +43,15 @@ graph TB
 ```mermaid
 sequenceDiagram
     participant User as ユーザー
-    participant UI as Streamlit UI
+    participant UI as React UI
+    participant API as FastAPI
     participant Agent as PriceTransferAgent
     participant Prompt as システムプロンプト
     participant Tools as ツール群
 
     User->>UI: 「原価計算のやり方を教えて」
-    UI->>Agent: 質問を送信
+    UI->>API: POST /api/chat
+    API->>Agent: 質問を送信
 
     Agent->>Agent: 質問内容を分析<br/>「原価計算」→ STEP 0 - CHECK 3
 
@@ -58,9 +62,10 @@ sequenceDiagram
 
     Agent->>Agent: detect_current_step<br/>ステップ判定
 
-    Agent->>UI: セッション状態更新<br/>current_step = "STEP_0_CHECK_3"
+    Agent->>API: セッション状態更新<br/>current_step = "STEP_0_CHECK_3"
+    API->>UI: SSEイベント: step_update
 
-    UI->>Agent: エージェント再初期化
+    API->>Agent: エージェント再初期化
 
     Agent->>Prompt: ステップ別プロンプト取得<br/>基本 + CHECK 3用追加
 
@@ -68,9 +73,10 @@ sequenceDiagram
 
     Tools-->>Agent: ツール結果
 
-    Agent->>UI: CHECK 3に特化した<br/>詳しい回答
+    Agent->>API: CHECK 3に特化した<br/>詳しい回答
+    API->>UI: SSEストリーミング
 
-    UI->>User: 表示（ストリーミング）
+    UI->>User: 表示（リアルタイム更新）
 ```
 
 ## プロンプト構成
@@ -102,10 +108,13 @@ graph LR
 
 ```mermaid
 graph TD
-    Session[st.session_state] -->|保持| SID[session_id]
+    Session[FastAPI Sessions<br/>api/main.py] -->|保持| SID[session_id]
     Session -->|保持| MSG[messages<br/>会話履歴]
     Session -->|保持| AGT[agent<br/>エージェントインスタンス]
     Session -->|保持| STEP[current_step<br/>判定されたステップ]
+    
+    React[React State] -->|取得| API[GET /api/session/{id}/messages]
+    React -->|更新| API2[POST /api/chat]
 
     STEP -->|例| E1["STEP_0_CHECK_3"]
     STEP -->|例| E2["STEP_1"]
@@ -125,7 +134,11 @@ graph TD
 ```mermaid
 graph TB
     subgraph UI層
-        APP[app.py<br/>Streamlit UI<br/>・チャット画面<br/>・ストリーミング表示<br/>・図の表示]
+        FRONTEND[frontend/src/App.tsx<br/>React UI<br/>・チャット画面<br/>・SSEストリーミング表示<br/>・Markdownレンダリング<br/>・図の表示]
+    end
+    
+    subgraph API層
+        API[api/main.py<br/>FastAPI<br/>・REST API<br/>・SSEストリーミング<br/>・セッション管理]
     end
 
     subgraph エージェント層
@@ -140,14 +153,16 @@ graph TB
         DETECTOR[tools/step_detector.py<br/>ステップ判定<br/>・LLMベース判定]
     end
 
-    APP --> CORE
+    FRONTEND --> API
+    API --> CORE
     CORE --> PROMPT
     CORE --> DIAGRAM
     CORE --> WEB
     CORE --> KB
     CORE --> DETECTOR
 
-    style APP fill:#E0F7FA
+    style FRONTEND fill:#E0F7FA
+    style API fill:#FFE4B5
     style CORE fill:#C8E6C9
     style PROMPT fill:#FFF9C4
     style DIAGRAM fill:#B3E5FC
@@ -196,8 +211,20 @@ graph TD
 - 例: CHECK 3 では `search_knowledge_base` + `calculator` + `generate_diagram`
 
 ### 4. セッション状態の活用
-- `current_step` でステップを管理
+- `current_step` でステップを管理（バックエンドで管理）
 - 会話中にステップが変わっても対応可能
+- フロントエンドでステップ表示を更新
+
+### 5. アーキテクチャの分離
+- **フロントエンド**: React + TypeScript（UI層）
+- **バックエンド**: FastAPI（API層、セッション管理）
+- **エージェント**: Strands Agents（ビジネスロジック層）
+- **ツール**: 各種ツール実装（機能層）
+
+### 6. ストリーミング実装
+- Server-Sent Events (SSE) を使用
+- リアルタイムでテキストチャンクを送信
+- ツール使用中やステップ更新もイベントとして送信
 
 ---
 
@@ -301,4 +328,74 @@ sequenceDiagram
     end
 
     WebTool-->>Agent: 信頼できる結果のみ返却
+```
+
+---
+
+## React版への移行
+
+### アーキテクチャの変更点
+
+**旧構成（Streamlit版）:**
+- UIとバックエンドが統合（`app.py`）
+- Streamlitのセッション管理
+- Streamlit独自のストリーミング
+
+**新構成（React版）:**
+- **フロントエンド**: React + TypeScript（`frontend/`）
+- **バックエンド**: FastAPI（`api/main.py`）
+- **分離**: UI層とAPI層を明確に分離
+- **ストリーミング**: Server-Sent Events (SSE)
+- **セッション管理**: FastAPIのメモリ管理
+
+### 通信フロー
+
+```
+React UI (ポート5173)
+    ↓ HTTP POST
+FastAPI (ポート8000)
+    ↓ エージェント呼び出し
+PriceTransferAgent
+    ↓ ツール実行
+各種ツール
+    ↓ 結果返却
+FastAPI
+    ↓ SSEストリーミング
+React UI (リアルタイム更新)
+```
+
+### セッション管理の違い
+
+**Streamlit版:**
+```python
+st.session_state = {
+    "session_id": str,
+    "messages": list,
+    "agent": PriceTransferAgent,
+    "current_step": str | None
+}
+```
+
+**React版:**
+- バックエンド: FastAPIのメモリ上で管理
+- フロントエンド: React Stateで表示用データを保持
+- API経由で同期
+
+### 起動方法
+
+詳細は `README_REACT.md` を参照。
+
+**簡単な起動:**
+```bash
+start_all.bat  # Windows
+```
+
+**個別起動:**
+```bash
+# ターミナル1
+python api/main.py
+
+# ターミナル2
+cd frontend
+npm run dev
 ```

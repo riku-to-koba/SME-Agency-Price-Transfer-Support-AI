@@ -58,48 +58,63 @@
 
 ```
 SME-Agency-Price-Transfer-Support-AI/
-├── app.py                          # Streamlit UI（エントリポイント）
-├── requirements.txt                # 依存パッケージ
+├── api/                            # FastAPIバックエンド
+│   ├── main.py                    # APIサーバー（エントリポイント）
+│   └── requirements.txt           # バックエンド依存パッケージ
 │
-├── agent/
+├── frontend/                       # React + TypeScriptフロントエンド
+│   ├── src/
+│   │   ├── App.tsx                # メインコンポーネント
+│   │   ├── App.css                # スタイル
+│   │   └── main.tsx               # エントリーポイント
+│   ├── package.json               # フロントエンド依存パッケージ
+│   └── vite.config.ts             # Vite設定
+│
+├── agent/                          # エージェントロジック
 │   ├── __init__.py
-│   ├── core.py                     # エージェント初期化・実行ロジック
-│   └── prompts.py                  # システムプロンプト定義
+│   ├── core.py                    # エージェント初期化・実行ロジック
+│   └── prompts.py                 # システムプロンプト定義
 │
-├── tools/
+├── tools/                          # ツール
 │   ├── __init__.py
-│   ├── web_search.py               # Web検索ツール（AI信頼性判定付き）
-│   ├── knowledge_base.py           # Knowledge Base検索ツール
-│   ├── step_detector.py            # ステップ自動判定ツール
-│   └── diagram_generator.py        # 図生成ツール
+│   ├── web_search.py              # Web検索ツール（AI信頼性判定付き）
+│   ├── knowledge_base.py          # Knowledge Base検索ツール
+│   ├── step_detector.py           # ステップ自動判定ツール
+│   └── diagram_generator.py       # 図生成ツール
 │
+├── app.py                          # Streamlit版（参考用、非推奨）
+├── requirements.txt               # 依存パッケージ（既存）
 └── utils/
     └── __init__.py
 ```
 
 ### 技術スタック
 
-- **UI**: Streamlit
+- **フロントエンド**: React 18 + TypeScript + Vite
+- **バックエンド**: FastAPI (Python)
 - **フレームワーク**: Strands Agents
 - **LLM**: AWS Bedrock - Claude Haiku 4.5 (`jp.anthropic.claude-haiku-4-5-20251001-v1:0`)
   - Region: ap-northeast-1
   - Temperature: 0.7
   - Max tokens: 50000
-  - Streaming: 有効
+  - Streaming: 有効（Server-Sent Events）
 - **検索**:
   - Tavily API (Web検索)
   - AWS Bedrock Knowledge Base (ナレッジベースID: `7SM8UQNQFL`)
 - **図生成**: matplotlib (Pythonサブプロセスで実行)
+- **ストリーミング**: Server-Sent Events (SSE)
 
 ---
 
 ## 🔧 実装済み機能
 
 ### 1. チャット機能
-- Streamlitを使用した基本的なチャットUI
-- ストリーミング応答（リアルタイムでテキストが生成される）
+- React + TypeScriptを使用したモダンなチャットUI
+- ストリーミング応答（Server-Sent Eventsでリアルタイムテキスト生成）
+- Markdownレンダリング（react-markdown）
 - チャット履歴の保存・表示
 - 履歴クリア機能
+- レスポンシブデザイン対応
 
 ### 2. ツール機能
 
@@ -138,61 +153,75 @@ SME-Agency-Price-Transfer-Support-AI/
 - 現在時刻を取得（Strands標準ツール）
 
 ### 3. セッション管理
-- UUID-based のセッションID生成
-- セッション状態の管理（会話履歴、エージェントインスタンス）
+- UUID-based のセッションID生成（バックエンドで管理）
+- セッション状態の管理（会話履歴、エージェントインスタンス、current_step）
+- FastAPIのメモリ上でセッション管理（再起動でリセット）
 
-### 4. エージェントの分離
-- UI部分（`app.py`）とエージェントロジック（`agent/core.py`）を分離
-- システムプロンプトは `agent/prompts.py` で管理
-- ツールは `tools/` 配下で管理
+### 4. アーキテクチャの分離
+- **フロントエンド**（`frontend/`）: React + TypeScript UI
+- **バックエンド**（`api/main.py`）: FastAPI REST API
+- **エージェントロジック**（`agent/core.py`）: エージェント初期化・実行
+- **システムプロンプト**（`agent/prompts.py`）: プロンプト定義
+- **ツール**（`tools/`）: 各種ツール実装
+
+### 5. APIエンドポイント
+- `POST /api/session`: セッション作成
+- `POST /api/chat`: チャットメッセージ送信（SSEストリーミング）
+- `GET /api/session/{session_id}/messages`: メッセージ履歴取得
+- `POST /api/session/{session_id}/clear`: セッションクリア
+- `GET /api/diagrams/latest`: 最新の図取得
+- `GET /api/diagrams/{filename}`: 図ファイル取得
 
 ---
 
-## 🚀 実装予定の機能
+## 🚀 実装済み機能（追加）
 
-### Phase 1: ステップ自動判定機能
+### Phase 1: ステップ自動判定機能 ✅
 
-**目的:**
+**実装済み:**
 - ユーザーの質問内容から、価格転嫁プロセスのどのステップにいるかを自動判定
 - 判定後、そのステップに特化したアドバイスを提供
 
-**実装方針:**
+**実装内容:**
 1. エージェントがユーザーの質問を分析
 2. 必要に応じて1〜2個の簡単な質問でヒアリング
 3. `detect_current_step` ツールを使用してステップを判定
-4. セッション状態 (`st.session_state.current_step`) を更新
+4. セッション状態（`current_step`）を更新
 5. エージェントを新しいステップ用のプロンプトで再初期化
+6. フロントエンドでステップ表示
 
-**期待される動作:**
+**動作例:**
 ```
 ユーザー: 「原価計算のやり方を教えて」
 ↓
-エージェント: [内部でSTEP_3と判定]
+エージェント: [内部でSTEP_0_CHECK_3と判定]
 ↓
 [detect_current_step ツール使用]
 ↓
-[システムプロンプトにSTEP_3用の追加プロンプトが追加される]
+[システムプロンプトにSTEP_0_CHECK_3用の追加プロンプトが追加される]
 ↓
-エージェント: 「STEP_3（原価計算）について、詳しくご説明します...」
+エージェント: 「STEP 0 - CHECK 3（原価計算）について、詳しくご説明します...」
+↓
+フロントエンド: ステップ表示「📌 現在のステップ: STEP_0_CHECK_3」
 ```
 
-### Phase 2: ステップ別のツール推奨
+### Phase 2: ステップ別のツール推奨 ✅
 
-**目的:**
+**実装済み:**
 - 判定されたステップに応じて、特定のツールを積極的に使用するよう推奨
 
-**実装方針:**
-- `agent/prompts.py` にステップ別の追加プロンプトを定義
+**実装内容:**
+- `agent/prompts.py` にステップ別の追加プロンプトを定義済み
 - 各ステップごとに「推奨ツール」と「使用指示」を記載
 - エージェントはこの指示に従って自動的にツールを使用
 
 **例:**
 ```
-STEP_3の場合:
-「このステップでは以下のツールを積極的に使用してください:
- - search_knowledge_base: 原価計算の手順を検索
- - calculator: 原価計算のシミュレーション
- - generate_diagram: 原価構造の可視化」
+STEP_0_CHECK_3の場合:
+「このステップで推奨されるツール（必ず使用）
+1. まず search_knowledge_base で「原価計算」を検索（必須）
+2. calculator: 原価計算のシミュレーション
+3. generate_diagram: 原価構造の可視化（円グラフ、棒グラフ）」
 ```
 
 ---
@@ -213,11 +242,12 @@ STEP_3の場合:
    - 不明確な場合: 1〜2個の質問で確認
 
 4. detect_current_step ツールを使用
-   - {"step": "STEP_3", "reasoning": "原価計算について質問"}
+   - {"step": "STEP_0_CHECK_3", "reasoning": "原価計算について質問"}
 
 5. セッション状態を更新 & エージェント再初期化
-   - st.session_state.current_step = "STEP_3"
+   - バックエンド: session["current_step"] = "STEP_0_CHECK_3"
    - エージェントに追加プロンプトを注入
+   - フロントエンド: ステップ表示を更新
 
 6. ステップに特化したアドバイスを提供
    - STEP_3の文脈を理解した詳しい回答
@@ -230,13 +260,21 @@ STEP_3の場合:
 
 ### セッション管理
 
+**バックエンド（FastAPI）:**
 ```python
-st.session_state = {
+sessions[session_id] = {
     "session_id": str,           # ランダムなUUID（8文字）
     "messages": list,            # 会話履歴
     "agent": PriceTransferAgent, # エージェントインスタンス
-    "current_step": str | None   # 判定されたステップ (例: "STEP_3")
+    "current_step": str | None   # 判定されたステップ (例: "STEP_0_CHECK_3")
 }
+```
+
+**フロントエンド（React）:**
+```typescript
+const [sessionId, setSessionId] = useState<string | null>(null)
+const [messages, setMessages] = useState<Message[]>([])
+const [currentStep, setCurrentStep] = useState<string | null>(null)
 ```
 
 ### エージェントの初期化・更新
@@ -254,21 +292,28 @@ agent.update_step("STEP_3")
 
 ## 🎨 UI要件
 
-### 現在のUI
+### 現在のUI（React版）
 - タイトル: 「価格転嫁支援AIアシスタント」
 - 履歴クリアボタン
+- ステップ表示（現在のステップを表示）
 - チャットエリア（会話履歴表示）
 - テキスト入力欄
 - 生成された図の自動表示（最新1件）
+- Markdownレンダリング対応
 
 ### 表示要素
-- ストリーミング応答（リアルタイムテキスト生成）
+- ストリーミング応答（Server-Sent Eventsでリアルタイムテキスト生成）
 - ツール使用中の表示（例: `*[search_knowledge_base を使用中]*`）
+- ステップ判定結果の表示（例: `📌 現在のステップ: STEP_0_CHECK_3`）
 - 生成された図の自動表示
+- レスポンシブデザイン（モバイル対応）
 
-### 今後の検討事項
-- ステップ判定結果の表示方法（ユーザーに明示するか？）
-- サイドバーの必要性（現時点では不要）
+### 技術的実装
+- React 18 + TypeScript
+- Vite（開発サーバー、HMR対応）
+- react-markdown（Markdownレンダリング）
+- Server-Sent Events（ストリーミング）
+- Axios（HTTP通信）
 
 ---
 
@@ -276,8 +321,10 @@ agent.update_step("STEP_3")
 
 ### 技術的制約
 - 図生成はPythonサブプロセスで実行（タイムアウト30秒）
-- セッション状態はStreamlitのメモリ上のみ（永続化なし）
+- セッション状態はFastAPIのメモリ上のみ（永続化なし、再起動でリセット）
 - 複数ユーザー同時利用時はセッションIDで分離
+- バックエンドとフロントエンドは別々のプロセスで起動
+- CORS設定が必要（開発環境: localhost:5173, localhost:3000）
 
 ### UX考慮事項
 - 価格転嫁は長期プロセスのため、すぐに最初から最後まで進めるものではない
@@ -286,12 +333,49 @@ agent.update_step("STEP_3")
 
 ---
 
+## 🚀 起動方法
+
+### 統合起動スクリプト（推奨）
+
+**Windows:**
+```bash
+start_all.bat
+```
+
+**PowerShell:**
+```powershell
+.\start_all.ps1
+```
+
+このスクリプトは以下を自動で実行します：
+1. 依存パッケージの確認とインストール
+2. バックエンドサーバーの起動（ポート8000）
+3. フロントエンドサーバーの起動（ポート5173）
+4. ブラウザを自動で開く
+
+### 個別起動
+
+**ターミナル1: バックエンド**
+```bash
+python api/main.py
+```
+
+**ターミナル2: フロントエンド**
+```bash
+cd frontend
+npm install  # 初回のみ
+npm run dev
+```
+
+詳細は `README_REACT.md` を参照してください。
+
+---
+
 ## 📝 未確定の検討事項
 
-- 各ステップで具体的にどのツールを使うべきか
-- ステップ判定の精度をどう担保するか
-- ステップ遷移（次のステップへの誘導）は必要か
-- 会話履歴の永続化は必要か
+- 会話履歴の永続化は必要か（現状はメモリ上のみ）
 - 業種別のカスタマイズは必要か
+- 本番環境でのセッション管理方法（データベースなど）
+- 認証・認可の実装
 
 ---
