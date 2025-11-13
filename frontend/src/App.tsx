@@ -90,6 +90,7 @@ function App() {
   const currentResponseRef = useRef<string>('')
   const abortControllerRef = useRef<AbortController | null>(null)
   const previousDiagramUrlRef = useRef<string | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // セッション初期化（ユーザー情報入力後）
   const initSession = async (userInfo: UserInfo) => {
@@ -218,6 +219,14 @@ function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  // textareaの高さを自動調整
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = 'auto'
+      textareaRef.current.style.height = `${Math.min(textareaRef.current.scrollHeight, 200)}px`
+    }
+  }, [input])
+
   const handleStop = () => {
     if (abortControllerRef.current) {
       abortControllerRef.current.abort()
@@ -252,6 +261,10 @@ function App() {
     
     if (!messageOverride) {
       setInput('')
+      // textareaの高さをリセット
+      if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto'
+      }
     }
     setIsLoading(true)
     currentResponseRef.current = ''
@@ -834,14 +847,26 @@ ${diagramData}
         </div>
 
         <div className="input-container">
-          <input
-            type="text"
+          <textarea
+            ref={textareaRef}
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleSend()}
-            placeholder="メッセージを入力してください"
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && !e.shiftKey && !isLoading) {
+                e.preventDefault()
+                handleSend()
+              }
+            }}
+            placeholder="メッセージを入力してください（Shift+Enterで改行）"
             disabled={isLoading || !sessionId}
             className="input-field"
+            rows={1}
+            style={{
+              resize: 'none',
+              minHeight: '48px',
+              maxHeight: '200px',
+              overflowY: 'auto',
+            }}
           />
           {isLoading ? (
             <button
