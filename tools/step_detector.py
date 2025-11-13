@@ -2,6 +2,8 @@
 import json
 import boto3
 import re
+import time
+from botocore.exceptions import ClientError
 from strands import tool
 
 
@@ -102,22 +104,52 @@ confidence は "high", "medium", "low" のいずれかです。
         print(f"📄 プロンプト長: {len(prompt)} 文字\n")
 
         print("🔧 [STEP 3] Bedrock APIを呼び出し中...")
-        # Bedrock APIを呼び出し（Claude Haiku）
-        response = bedrock_runtime.invoke_model(
-            modelId="jp.anthropic.claude-haiku-4-5-20251001-v1:0",
-            body=json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 500,
-                "temperature": 0.3,  # 判定タスクなので低めに設定
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ]
-            })
-        )
-        print("✅ [STEP 3] Bedrock API呼び出し成功\n")
+        # Bedrock APIを呼び出し（Claude Haiku）- リトライロジック付き
+        max_retries = 5
+        retry_delay = 2  # 初期待機時間（秒）
+        
+        response = None
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                response = bedrock_runtime.invoke_model(
+                    modelId="jp.anthropic.claude-haiku-4-5-20251001-v1:0",
+                    body=json.dumps({
+                        "anthropic_version": "bedrock-2023-05-31",
+                        "max_tokens": 500,
+                        "temperature": 0.3,  # 判定タスクなので低めに設定
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": prompt
+                            }
+                        ]
+                    })
+                )
+                print("✅ [STEP 3] Bedrock API呼び出し成功\n")
+                break  # 成功したらループを抜ける
+                
+            except ClientError as e:
+                error_code = e.response.get('Error', {}).get('Code', '')
+                last_error = e
+                
+                if error_code == 'ThrottlingException':
+                    if attempt < max_retries - 1:
+                        wait_time = retry_delay * (2 ** attempt)  # 指数バックオフ
+                        print(f"⚠️  [STEP 3] レート制限エラー (試行 {attempt + 1}/{max_retries})")
+                        print(f"⏳ {wait_time}秒待機してから再試行します...\n")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"❌ [STEP 3] 最大リトライ回数に達しました\n")
+                        raise
+                else:
+                    # ThrottlingException以外のエラーは即座に再スロー
+                    raise
+                    
+        if response is None:
+            raise last_error if last_error else Exception("API呼び出しに失敗しました")
 
         # レスポンスを解析
         print("🔧 [STEP 4] レスポンスを解析中...")

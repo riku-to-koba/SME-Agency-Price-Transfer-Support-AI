@@ -1,6 +1,9 @@
 """Web検索ツール（Tavily API + AI信頼性判定）"""
 import json
 import boto3
+import time
+import re
+from botocore.exceptions import ClientError
 from strands import tool
 
 
@@ -74,28 +77,57 @@ source_type は以下から選択：
 - "unknown": 判定不能・信頼性低い
 """
 
-        # Bedrock APIを呼び出し（Claude Haiku - 高速判定用）
-        response = bedrock_runtime.invoke_model(
-            modelId="jp.anthropic.claude-haiku-4-5-20251001-v1:0",
-            body=json.dumps({
-                "anthropic_version": "bedrock-2023-05-31",
-                "max_tokens": 300,
-                "temperature": 0.1,  # 判定タスクなので低めに設定
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": prompt
-                    }
-                ]
-            })
-        )
+        # Bedrock APIを呼び出し（Claude Haiku - 高速判定用）- リトライロジック付き
+        max_retries = 5
+        retry_delay = 2  # 初期待機時間（秒）
+        
+        response = None
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                response = bedrock_runtime.invoke_model(
+                    modelId="jp.anthropic.claude-haiku-4-5-20251001-v1:0",
+                    body=json.dumps({
+                        "anthropic_version": "bedrock-2023-05-31",
+                        "max_tokens": 300,
+                        "temperature": 0.1,  # 判定タスクなので低めに設定
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": prompt
+                            }
+                        ]
+                    })
+                )
+                break  # 成功したらループを抜ける
+                
+            except ClientError as e:
+                error_code = e.response.get('Error', {}).get('Code', '')
+                last_error = e
+                
+                if error_code == 'ThrottlingException':
+                    if attempt < max_retries - 1:
+                        wait_time = retry_delay * (2 ** attempt)  # 指数バックオフ
+                        print(f"⚠️  [AI信頼性判定] レート制限エラー (試行 {attempt + 1}/{max_retries})")
+                        print(f"⏳ {wait_time}秒待機してから再試行します...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"❌ [AI信頼性判定] 最大リトライ回数に達しました")
+                        raise
+                else:
+                    # ThrottlingException以外のエラーは即座に再スロー
+                    raise
+                    
+        if response is None:
+            raise last_error if last_error else Exception("API呼び出しに失敗しました")
 
         # レスポンスを解析
         response_body = json.loads(response['body'].read())
         assistant_message = response_body['content'][0]['text']
 
         # JSONブロックを抽出
-        import re
         json_match = re.search(r'```json\s*(.*?)\s*```', assistant_message, re.DOTALL)
         if json_match:
             result_json = json_match.group(1)

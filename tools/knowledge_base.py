@@ -1,6 +1,8 @@
 """Knowledge Base検索ツール（AWS Bedrock Knowledge Base）"""
 import json
 import boto3
+import time
+from botocore.exceptions import ClientError
 from strands import tool
 
 
@@ -26,7 +28,7 @@ def search_knowledge_base(query: str, max_results: int = 5) -> str:
             region_name=region
         )
 
-        # Retrieve API を使用してナレッジベースから関連文書を取得
+        # Retrieve API を使用してナレッジベースから関連文書を取得 - リトライロジック付き
         retrieve_params = {
             'knowledgeBaseId': knowledge_base_id,
             'retrievalQuery': {
@@ -40,7 +42,37 @@ def search_knowledge_base(query: str, max_results: int = 5) -> str:
             }
         }
 
-        response = bedrock_agent_client.retrieve(**retrieve_params)
+        max_retries = 5
+        retry_delay = 2  # 初期待機時間（秒）
+        
+        response = None
+        last_error = None
+        
+        for attempt in range(max_retries):
+            try:
+                response = bedrock_agent_client.retrieve(**retrieve_params)
+                break  # 成功したらループを抜ける
+                
+            except ClientError as e:
+                error_code = e.response.get('Error', {}).get('Code', '')
+                last_error = e
+                
+                if error_code == 'ThrottlingException':
+                    if attempt < max_retries - 1:
+                        wait_time = retry_delay * (2 ** attempt)  # 指数バックオフ
+                        print(f"⚠️  [Knowledge Base] レート制限エラー (試行 {attempt + 1}/{max_retries})")
+                        print(f"⏳ {wait_time}秒待機してから再試行します...")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        print(f"❌ [Knowledge Base] 最大リトライ回数に達しました")
+                        raise
+                else:
+                    # ThrottlingException以外のエラーは即座に再スロー
+                    raise
+                    
+        if response is None:
+            raise last_error if last_error else Exception("API呼び出しに失敗しました")
 
         # 結果を整理
         results = []

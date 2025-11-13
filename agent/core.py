@@ -6,6 +6,7 @@ from tools.diagram_generator import generate_diagram
 from tools.web_search import web_search
 from tools.knowledge_base import search_knowledge_base
 from tools.step_detector import detect_current_step
+from tools.cost_analysis import analyze_cost_impact
 from .prompts import MAIN_SYSTEM_PROMPT, get_step_prompt
 
 
@@ -84,6 +85,11 @@ class PriceTransferAgent:
             step_prompt = get_step_prompt(self.current_step)
             if step_prompt:
                 prompt += "\n\n" + step_prompt
+                print(f"[DEBUG] ✅ ステップ別プロンプトを追加: {self.current_step}")
+            else:
+                print(f"[DEBUG] ⚠️ ステップ別プロンプトが見つかりません: {self.current_step}")
+        else:
+            print("[DEBUG] ⚠️ current_stepがNoneのため、ステップ別プロンプトを追加しません")
 
         return prompt
 
@@ -143,6 +149,20 @@ class PriceTransferAgent:
             print("[DEBUG] ⚠️ システムプロンプトにユーザー情報が含まれていません")
             print(f"[DEBUG] 現在のuser_info: {self.user_info}")
         
+        # デバッグ: ステップ別プロンプトが含まれているか確認
+        if self.current_step:
+            step_prompt = get_step_prompt(self.current_step)
+            if step_prompt:
+                print(f"[DEBUG] ✅ ステップ別プロンプトが追加されています: {self.current_step}")
+                print(f"[DEBUG] ステップ別プロンプトの先頭100文字: {step_prompt[:100]}...")
+            else:
+                print(f"[DEBUG] ⚠️ ステップ別プロンプトが見つかりません: {self.current_step}")
+        else:
+            print("[DEBUG] ⚠️ 現在のステップが設定されていません（current_step=None）")
+        
+        # デバッグ: システムプロンプトの長さを確認
+        print(f"[DEBUG] システムプロンプトの長さ: {len(system_prompt)} 文字")
+        
         return Agent(
             model=self.model,
             tools=[
@@ -151,7 +171,8 @@ class PriceTransferAgent:
                 web_search,
                 search_knowledge_base,
                 generate_diagram,
-                detect_current_step
+                detect_current_step,
+                analyze_cost_impact
             ],
             system_prompt=system_prompt,
             callback_handler=None

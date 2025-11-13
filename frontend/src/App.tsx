@@ -15,6 +15,7 @@ interface ChatEvent {
   type: 'content' | 'tool_use' | 'step_update' | 'done' | 'error'
   data?: string
   tool?: string
+  show_modal?: boolean
   step?: string
   confidence?: string
   reasoning?: string
@@ -29,6 +30,15 @@ interface UserInfo {
   region?: string
   clientIndustry?: string
   priceTransferStatus?: string
+}
+
+interface CostAnalysisData {
+  before_sales: string
+  before_cost: string
+  before_expenses: string
+  current_sales: string
+  current_cost: string
+  current_expenses: string
 }
 
 // ステップ名をユーザー向けに変換
@@ -61,6 +71,16 @@ function App() {
   const [diagramMessageIndex, setDiagramMessageIndex] = useState<number | null>(null) // 図が紐づくメッセージのインデックス
   const [showUserInfoModal, setShowUserInfoModal] = useState(true)
   const [userInfo, setUserInfo] = useState<UserInfo>({})
+  const [showCostAnalysisModal, setShowCostAnalysisModal] = useState(false)
+  const [costAnalysisData, setCostAnalysisData] = useState<CostAnalysisData>({
+    before_sales: '',
+    before_cost: '',
+    before_expenses: '',
+    current_sales: '',
+    current_cost: '',
+    current_expenses: ''
+  })
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const currentResponseRef = useRef<string>('')
   const abortControllerRef = useRef<AbortController | null>(null)
@@ -286,8 +306,13 @@ function App() {
                     })
                   }
                 } else if (event.type === 'tool_use') {
-                  // ツール使用中はログのみ（ユーザーには表示しない）
+                  // ツール使用中
                   console.log(`[ツール使用中] ${event.tool}`)
+                  
+                  // analyze_cost_impactツールの場合はモーダルを表示
+                  if (event.tool === 'analyze_cost_impact' && event.show_modal) {
+                    setShowCostAnalysisModal(true)
+                  }
                 } else if (event.type === 'step_update') {
                   setCurrentStep(event.step || null)
                   // ステップ更新通知をメッセージに追加（ユーザー向けに分かりやすく）
@@ -368,6 +393,101 @@ function App() {
     } finally {
       setIsLoading(false)
       abortControllerRef.current = null
+    }
+  }
+
+  // 価格転嫁検討ツールの実行
+  const handleCostAnalysisSubmit = async () => {
+    setIsAnalyzing(true)
+    try {
+      // 数値に変換
+      const data = {
+        before_sales: parseFloat(costAnalysisData.before_sales) || 0,
+        before_cost: parseFloat(costAnalysisData.before_cost) || 0,
+        before_expenses: parseFloat(costAnalysisData.before_expenses) || 0,
+        current_sales: parseFloat(costAnalysisData.current_sales) || 0,
+        current_cost: parseFloat(costAnalysisData.current_cost) || 0,
+        current_expenses: parseFloat(costAnalysisData.current_expenses) || 0
+      }
+
+      // バリデーション
+      if (data.before_sales <= 0 || data.current_sales <= 0) {
+        alert('売上高は0より大きい値を入力してください')
+        setIsAnalyzing(false)
+        return
+      }
+
+      const response = await axios.post(`${API_BASE_URL}/api/cost-analysis`, data)
+      
+      if (response.data.success) {
+        // 結果をチャットに追加
+        const result = response.data.result
+        let resultText = '【価格転嫁検討ツール - 分析結果】\n\n'
+        
+        resultText += '【コスト高騰前の状況】\n'
+        resultText += `売上高: ${result.before.sales.toLocaleString()}円\n`
+        resultText += `売上原価: ${result.before.cost.toLocaleString()}円\n`
+        resultText += `販管費・その他経費: ${result.before.expenses.toLocaleString()}円\n`
+        resultText += `総コスト: ${result.before.total_cost.toLocaleString()}円\n`
+        resultText += `利益: ${result.before.profit.toLocaleString()}円\n`
+        resultText += `利益率: ${result.before.profit_rate.toFixed(2)}%\n\n`
+        
+        resultText += '【現在の状況】\n'
+        resultText += `売上高: ${result.current.sales.toLocaleString()}円\n`
+        resultText += `売上原価: ${result.current.cost.toLocaleString()}円\n`
+        resultText += `販管費・その他経費: ${result.current.expenses.toLocaleString()}円\n`
+        resultText += `総コスト: ${result.current.total_cost.toLocaleString()}円\n`
+        resultText += `利益: ${result.current.profit.toLocaleString()}円\n`
+        resultText += `利益率: ${result.current.profit_rate.toFixed(2)}%\n\n`
+        
+        resultText += '【コスト高騰の影響】\n'
+        resultText += `売上高: ${result.changes.sales.amount >= 0 ? '+' : ''}${result.changes.sales.amount.toLocaleString()}円 (${result.changes.sales.rate >= 0 ? '+' : ''}${result.changes.sales.rate.toFixed(2)}%)\n`
+        resultText += `売上原価: ${result.changes.cost.amount >= 0 ? '+' : ''}${result.changes.cost.amount.toLocaleString()}円 (${result.changes.cost.rate >= 0 ? '+' : ''}${result.changes.cost.rate.toFixed(2)}%)\n`
+        resultText += `販管費・その他経費: ${result.changes.expenses.amount >= 0 ? '+' : ''}${result.changes.expenses.amount.toLocaleString()}円 (${result.changes.expenses.rate >= 0 ? '+' : ''}${result.changes.expenses.rate.toFixed(2)}%)\n`
+        resultText += `総コスト: ${result.changes.total_cost.amount >= 0 ? '+' : ''}${result.changes.total_cost.amount.toLocaleString()}円 (${result.changes.total_cost.rate >= 0 ? '+' : ''}${result.changes.total_cost.rate.toFixed(2)}%)\n`
+        resultText += `利益: ${result.changes.profit.amount >= 0 ? '+' : ''}${result.changes.profit.amount.toLocaleString()}円 (${result.changes.profit.rate >= 0 ? '+' : ''}${result.changes.profit.rate.toFixed(2)}%)\n\n`
+        
+        if (result.changes.total_cost.rate > result.changes.sales.rate || result.current.profit_rate < result.before.profit_rate) {
+          resultText += '⚠️ **価格転嫁の必要性**: コスト高騰の影響が大きいため、価格転嫁を検討することをお勧めします。\n\n'
+        } else {
+          resultText += '✅ **現状**: コスト高騰の影響は比較的軽微です。\n\n'
+        }
+        
+        resultText += '【参考価格の算出】\n'
+        resultText += `コスト高騰前の利益率を維持するための参考価格: ${result.reference_price.toLocaleString()}円\n`
+        resultText += `現在の価格との差額: ${result.price_gap >= 0 ? '+' : ''}${result.price_gap.toLocaleString()}円 (${result.price_gap_rate >= 0 ? '+' : ''}${result.price_gap_rate.toFixed(2)}%)\n\n`
+        
+        if (result.price_gap > 0) {
+          resultText += `💡 **推奨**: 価格を ${result.price_gap.toLocaleString()}円 引き上げることで、コスト高騰前の利益率（${result.before.profit_rate.toFixed(2)}%）を維持できます。\n`
+        } else {
+          resultText += '💡 **現状**: 現在の価格でコスト高騰前の利益率を維持できています。\n'
+        }
+
+        // ユーザーメッセージとアシスタントメッセージを追加
+        setMessages(prev => [
+          ...prev,
+          { role: 'user', content: '価格転嫁検討ツールで分析しました' },
+          { role: 'assistant', content: resultText }
+        ])
+        
+        // モーダルを閉じる
+        setShowCostAnalysisModal(false)
+        setCostAnalysisData({
+          before_sales: '',
+          before_cost: '',
+          before_expenses: '',
+          current_sales: '',
+          current_cost: '',
+          current_expenses: ''
+        })
+      } else {
+        alert(`分析エラー: ${response.data.message}`)
+      }
+    } catch (error: any) {
+      console.error('コスト分析エラー:', error)
+      alert(`エラーが発生しました: ${error.response?.data?.message || error.message}`)
+    } finally {
+      setIsAnalyzing(false)
     }
   }
 
@@ -579,6 +699,24 @@ function App() {
       {currentStep && (
         <div className="step-indicator">
           📌 現在のステップ: <strong>{formatStepName(currentStep)}</strong>
+          {currentStep === 'STEP_0_CHECK_3' && (
+            <button
+              onClick={() => setShowCostAnalysisModal(true)}
+              className="cost-analysis-button"
+              style={{
+                marginLeft: '1rem',
+                padding: '0.5rem 1rem',
+                backgroundColor: '#2a2a2a',
+                color: '#ffffff',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontSize: '0.875rem'
+              }}
+            >
+              📊 価格転嫁検討ツール
+            </button>
+          )}
         </div>
       )}
 
@@ -648,6 +786,130 @@ function App() {
           )}
         </div>
       </div>
+
+      {/* 価格転嫁検討ツールモーダル */}
+      {showCostAnalysisModal && (
+        <div className="modal-overlay" onClick={() => !isAnalyzing && setShowCostAnalysisModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '700px' }}>
+            <h2>価格転嫁検討ツール</h2>
+            <p className="modal-description">
+              コスト高騰前と現在のデータを入力して、価格転嫁の必要性を分析します。<br />
+              決算書等から数値を入力してください。
+            </p>
+
+            <div style={{ marginBottom: '2rem' }}>
+              <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', borderBottom: '2px solid #e0e0e0', paddingBottom: '0.5rem' }}>
+                コスト高騰前の情報
+              </h3>
+              <div className="form-group">
+                <label htmlFor="before_sales">売上高（円）</label>
+                <input
+                  id="before_sales"
+                  type="number"
+                  value={costAnalysisData.before_sales}
+                  onChange={(e) => setCostAnalysisData({ ...costAnalysisData, before_sales: e.target.value })}
+                  placeholder="例: 10000000"
+                  className="form-input"
+                  disabled={isAnalyzing}
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="before_cost">売上原価（円）</label>
+                <input
+                  id="before_cost"
+                  type="number"
+                  value={costAnalysisData.before_cost}
+                  onChange={(e) => setCostAnalysisData({ ...costAnalysisData, before_cost: e.target.value })}
+                  placeholder="例: 6000000"
+                  className="form-input"
+                  disabled={isAnalyzing}
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="before_expenses">販管費・その他経費（円）</label>
+                <input
+                  id="before_expenses"
+                  type="number"
+                  value={costAnalysisData.before_expenses}
+                  onChange={(e) => setCostAnalysisData({ ...costAnalysisData, before_expenses: e.target.value })}
+                  placeholder="例: 2000000"
+                  className="form-input"
+                  disabled={isAnalyzing}
+                />
+              </div>
+            </div>
+
+            <div style={{ marginBottom: '2rem' }}>
+              <h3 style={{ fontSize: '1.1rem', marginBottom: '1rem', borderBottom: '2px solid #e0e0e0', paddingBottom: '0.5rem' }}>
+                現在の情報
+              </h3>
+              <div className="form-group">
+                <label htmlFor="current_sales">売上高（円）</label>
+                <input
+                  id="current_sales"
+                  type="number"
+                  value={costAnalysisData.current_sales}
+                  onChange={(e) => setCostAnalysisData({ ...costAnalysisData, current_sales: e.target.value })}
+                  placeholder="例: 10000000"
+                  className="form-input"
+                  disabled={isAnalyzing}
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="current_cost">売上原価（円）</label>
+                <input
+                  id="current_cost"
+                  type="number"
+                  value={costAnalysisData.current_cost}
+                  onChange={(e) => setCostAnalysisData({ ...costAnalysisData, current_cost: e.target.value })}
+                  placeholder="例: 7000000"
+                  className="form-input"
+                  disabled={isAnalyzing}
+                />
+              </div>
+              <div className="form-group">
+                <label htmlFor="current_expenses">販管費・その他経費（円）</label>
+                <input
+                  id="current_expenses"
+                  type="number"
+                  value={costAnalysisData.current_expenses}
+                  onChange={(e) => setCostAnalysisData({ ...costAnalysisData, current_expenses: e.target.value })}
+                  placeholder="例: 2000000"
+                  className="form-input"
+                  disabled={isAnalyzing}
+                />
+              </div>
+            </div>
+
+            <div className="modal-buttons">
+              <button
+                onClick={handleCostAnalysisSubmit}
+                className="submit-button"
+                disabled={isAnalyzing}
+              >
+                {isAnalyzing ? '分析中...' : '分析実行'}
+              </button>
+              <button
+                onClick={() => setShowCostAnalysisModal(false)}
+                className="skip-button"
+                disabled={isAnalyzing}
+                style={{
+                  padding: '0.875rem 2rem',
+                  backgroundColor: 'transparent',
+                  color: '#666666',
+                  border: '1px solid #d8d8d8',
+                  borderRadius: '8px',
+                  cursor: isAnalyzing ? 'not-allowed' : 'pointer',
+                  fontSize: '0.9375rem',
+                  fontFamily: 'inherit'
+                }}
+              >
+                キャンセル
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

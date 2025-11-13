@@ -18,6 +18,8 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from agent.core import PriceTransferAgent
+from tools.cost_analysis import calculate_cost_impact
+from tools.step_detector import detect_current_step
 
 app = FastAPI(title="価格転嫁支援AIアシスタント API")
 
@@ -54,6 +56,21 @@ class SessionRequest(BaseModel):
 
 class SessionResponse(BaseModel):
     session_id: str
+
+
+class CostAnalysisRequest(BaseModel):
+    before_sales: float
+    before_cost: float
+    before_expenses: float
+    current_sales: float
+    current_cost: float
+    current_expenses: float
+
+
+class CostAnalysisResponse(BaseModel):
+    success: bool
+    result: Optional[dict] = None
+    message: Optional[str] = None
 
 
 def get_or_create_session(session_id: Optional[str] = None, user_info: Optional[dict] = None) -> str:
@@ -170,12 +187,88 @@ async def chat_endpoint(request: ChatMessage):
     user_message = {"role": "user", "content": request.message}
     session["messages"].append(user_message)
     
+    # ============================================================================
+    # ステップ判定を最初に実行（質問の最初にステップ判定を行う）
+    # ============================================================================
+    print(f"\n{'='*80}")
+    print(f"[DEBUG] ========== 質問の最初にステップ判定を実行 ==========")
+    print(f"[DEBUG] ユーザーの質問: {request.message}")
+    print(f"{'='*80}\n")
+    
+    # 会話履歴から文脈を構築（直近5件のメッセージ）
+    conversation_context = ""
+    recent_messages = session["messages"][-5:]  # 直近5件
+    for msg in recent_messages:
+        role = msg.get("role", "unknown")
+        content = msg.get("content", "")
+        if role == "user":
+            conversation_context += f"ユーザー: {content}\n"
+        elif role == "assistant":
+            conversation_context += f"アシスタント: {content[:200]}...\n"  # 長い場合は省略
+    
+    # ステップ判定を実行（同期関数なので直接呼び出し可能）
+    # 変数を最初に初期化
+    detected_step = None
+    confidence = "不明"
+    reasoning = "理由なし"
+    step_updated = False
+    
+    try:
+        step_result_json = detect_current_step(
+            user_question=request.message,
+            conversation_context=conversation_context
+        )
+        
+        # JSON結果をパース
+        step_result = json.loads(step_result_json)
+        detected_step = step_result.get("step")
+        confidence = step_result.get("confidence", "不明")
+        reasoning = step_result.get("reasoning", "理由なし")
+        
+        print(f"[DEBUG] ステップ判定結果:")
+        print(f"  - ステップ: {detected_step}")
+        print(f"  - 信頼度: {confidence}")
+        print(f"  - 理由: {reasoning}\n")
+        
+        # ステップが有効で、現在のステップと異なる場合のみ更新
+        if detected_step and detected_step != "UNKNOWN":
+            current_step = session.get("current_step")
+            if current_step != detected_step:
+                print(f"[DEBUG] ✅ ステップを更新: {current_step} -> {detected_step}")
+                session["current_step"] = detected_step
+                # エージェントを新しいステップで再初期化
+                session["agent"].update_step(detected_step)
+                print(f"[DEBUG] ✅ エージェント再初期化完了（新しいプロンプトで）\n")
+                step_updated = True
+            else:
+                print(f"[DEBUG] ℹ️ ステップは既に設定済み: {detected_step}\n")
+        else:
+            print(f"[DEBUG] ⚠️ ステップが判定できませんでした（UNKNOWN）\n")
+            
+    except Exception as e:
+        print(f"[DEBUG] ❌ ステップ判定エラー: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        print(f"[DEBUG] ⚠️ エラーが発生しましたが、処理を続行します\n")
+    
+    # ステップ更新情報を保存（ストリーミング開始時に送信するため）
+    step_update_info = {
+        "step": detected_step,
+        "confidence": confidence,
+        "reasoning": reasoning,
+        "updated": step_updated
+    }
+    
     async def stream_response():
         """ストリーミング応答を生成"""
         full_response = ""
         has_content = False
         current_tool = None
         is_cancelled = False
+        
+        # ステップ更新情報があれば、最初に送信
+        if step_update_info.get("updated") and step_update_info.get("step"):
+            yield f"data: {json.dumps({'type': 'step_update', 'step': step_update_info['step'], 'confidence': step_update_info['confidence'], 'reasoning': step_update_info['reasoning']}, ensure_ascii=False)}\n\n"
         
         try:
             agent = session["agent"]
@@ -197,35 +290,27 @@ async def chat_endpoint(request: ChatMessage):
                         yield f"data: {json.dumps({'type': 'content', 'data': display_response}, ensure_ascii=False)}\n\n"
                     
                     elif "current_tool_use" in event and event["current_tool_use"].get("name"):
-                        # ツール使用情報（ログのみ、ユーザーには送信しない）
+                        # ツール使用情報
                         tool_name = event["current_tool_use"]["name"]
                         if tool_name != current_tool:
                             current_tool = tool_name
                             print(f"[DEBUG] ツール使用中: {tool_name}")
-                            # ユーザーには送信しない（ログのみ）
+                            
+                            # analyze_cost_impactツールの場合は、フロントエンドにモーダル表示イベントを送信
+                            if tool_name == "analyze_cost_impact":
+                                yield f"data: {json.dumps({'type': 'tool_use', 'tool': tool_name, 'show_modal': True}, ensure_ascii=False)}\n\n"
+                            else:
+                                # その他のツールはログのみ
+                                pass
                     
                     elif "tool_result" in event:
-                        # ツール結果を検知してステップ判定を処理
+                        # ツール結果を検知（detect_current_stepは既に質問の最初で実行済み）
                         tool_use = event.get("tool_use", {})
                         if tool_use.get("name") == "detect_current_step":
+                            # 既に質問の最初でステップ判定を行っているため、ここではログのみ
                             tool_result = event.get("tool_result", "")
-                            
-                            try:
-                                result_data = json.loads(tool_result)
-                                detected_step = result_data.get("step")
-                                confidence = result_data.get("confidence", "不明")
-                                reasoning = result_data.get("reasoning", "理由なし")
-                                
-                                # ステップが有効な場合のみ更新
-                                if detected_step and detected_step != "UNKNOWN":
-                                    session["current_step"] = detected_step
-                                    # エージェントを再初期化
-                                    update_result = session["agent"].update_step(detected_step)
-                                    
-                                    yield f"data: {json.dumps({'type': 'step_update', 'step': detected_step, 'confidence': confidence, 'reasoning': reasoning}, ensure_ascii=False)}\n\n"
-                            except (json.JSONDecodeError, AttributeError) as e:
-                                # JSONパースエラーは無視
-                                pass
+                            print(f"[DEBUG] ℹ️ エージェントがdetect_current_stepを再度呼び出しました（既に実行済み）")
+                            # ステップ更新イベントは送信しない（既に質問の最初で処理済み）
                 except (GeneratorExit, asyncio.CancelledError) as e:
                     # クライアント切断を検知
                     is_cancelled = True
@@ -341,6 +426,43 @@ async def get_diagram(filename: str):
         raise HTTPException(status_code=404, detail="Diagram not found")
     
     return FileResponse(filepath, media_type="image/png")
+
+
+@app.post("/api/cost-analysis", response_model=CostAnalysisResponse)
+async def cost_analysis_endpoint(request: CostAnalysisRequest):
+    """価格転嫁検討ツール - コスト高騰影響分析
+    
+    このエンドポイントはSTEP_0_CHECK_3（原価計算の実施）の時のみ使用可能です。
+    """
+    try:
+        # セッションのcurrent_stepをチェック（オプション）
+        # 今回はツールとして直接呼び出せるようにする
+        
+        # 計算実行
+        result = calculate_cost_impact(
+            before_sales=request.before_sales,
+            before_cost=request.before_cost,
+            before_expenses=request.before_expenses,
+            current_sales=request.current_sales,
+            current_cost=request.current_cost,
+            current_expenses=request.current_expenses
+        )
+        
+        return CostAnalysisResponse(
+            success=True,
+            result=result,
+            message="分析が完了しました"
+        )
+        
+    except Exception as e:
+        print(f"[DEBUG] コスト分析エラー: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return CostAnalysisResponse(
+            success=False,
+            result=None,
+            message=f"分析エラー: {str(e)}"
+        )
 
 
 if __name__ == "__main__":
