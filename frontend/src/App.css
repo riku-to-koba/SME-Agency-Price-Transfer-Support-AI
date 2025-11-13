@@ -170,6 +170,24 @@
   }
 }
 
+@keyframes statusPulse {
+  0%, 100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+.status-message {
+  display: inline-block;
+  margin-top: 0.5rem;
+  font-size: 0.9rem;
+  color: #666;
+  font-style: italic;
+  animation: statusPulse 2.5s ease-in-out infinite;
+}
+
 .diagram-container {
   padding: 2rem 2.5rem;
   background-color: #ffffff;
@@ -492,6 +510,10 @@
 
   .cursor {
     background-color: #e5e5e5;
+  }
+
+  .status-message {
+    color: #cccccc;
   }
 
   .diagram-container {

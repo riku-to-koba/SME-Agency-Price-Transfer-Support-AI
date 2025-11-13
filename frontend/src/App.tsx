@@ -12,7 +12,7 @@ interface Message {
 }
 
 interface ChatEvent {
-  type: 'content' | 'tool_use' | 'step_update' | 'done' | 'error'
+  type: 'content' | 'tool_use' | 'step_update' | 'done' | 'error' | 'status'
   data?: string
   tool?: string
   show_modal?: boolean
@@ -21,6 +21,8 @@ interface ChatEvent {
   reasoning?: string
   content?: string
   error?: string
+  status?: 'thinking' | 'tool_use' | 'none'
+  message?: string
 }
 
 interface UserInfo {
@@ -52,6 +54,7 @@ function formatStepName(step: string): string {
     'STEP_0_CHECK_6': '価格交渉準備編 - 取引先の経営方針・業績把握',
     'STEP_0_CHECK_7': '価格交渉準備編 - 自社の付加価値の明確化',
     'STEP_0_CHECK_8': '価格交渉準備編 - 適正な取引慣行の確認',
+    'STEP_0_CHECK_9': '価格交渉準備編 - 価格転嫁の必要性判定',
     'STEP_1': '価格交渉実践編 - 業界動向の情報収集',
     'STEP_2': '価格交渉実践編 - 取引先情報収集と交渉方針検討',
     'STEP_3': '価格交渉実践編 - 書面での申し入れ',
@@ -81,6 +84,7 @@ function App() {
     current_expenses: ''
   })
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [currentStatus, setCurrentStatus] = useState<string>('') // 現在のステータスメッセージ
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const currentResponseRef = useRef<string>('')
   const abortControllerRef = useRef<AbortController | null>(null)
@@ -235,12 +239,19 @@ function App() {
     }
   }
 
-  const handleSend = async () => {
-    if (!input.trim() || !sessionId || isLoading) return
+  const handleSend = async (messageOverride?: string, skipUserMessage: boolean = false) => {
+    const messageToSend = messageOverride || input
+    if (!messageToSend.trim() || !sessionId || isLoading) return
 
-    const userMessage: Message = { role: 'user', content: input }
-    setMessages(prev => [...prev, userMessage])
-    setInput('')
+    // ユーザーメッセージを追加（skipUserMessageがtrueの場合はスキップ）
+    if (!skipUserMessage) {
+      const userMessage: Message = { role: 'user', content: messageToSend }
+      setMessages(prev => [...prev, userMessage])
+    }
+    
+    if (!messageOverride) {
+      setInput('')
+    }
     setIsLoading(true)
     currentResponseRef.current = ''
 
@@ -254,7 +265,7 @@ function App() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          message: input,
+          message: messageToSend,
           session_id: sessionId,
         }),
         signal: abortControllerRef.current.signal,
@@ -305,6 +316,13 @@ function App() {
                       return newMessages
                     })
                   }
+                } else if (event.type === 'status') {
+                  // ステータス更新（思考中、検索中など）
+                  if (event.status === 'none') {
+                    setCurrentStatus('')
+                  } else {
+                    setCurrentStatus(event.message || '')
+                  }
                 } else if (event.type === 'tool_use') {
                   // ツール使用中
                   console.log(`[ツール使用中] ${event.tool}`)
@@ -335,6 +353,9 @@ function App() {
                     })
                   }
                 } else if (event.type === 'done') {
+                  // ステータスをクリア
+                  setCurrentStatus('')
+                  
                   // アシスタントメッセージがまだ追加されていない場合は追加
                   if (!hasAddedAssistantMessage) {
                     hasAddedAssistantMessage = true
@@ -392,6 +413,7 @@ function App() {
       ])
     } finally {
       setIsLoading(false)
+      setCurrentStatus('') // ローディング終了時にステータスをクリア
       abortControllerRef.current = null
     }
   }
@@ -420,55 +442,7 @@ function App() {
       const response = await axios.post(`${API_BASE_URL}/api/cost-analysis`, data)
       
       if (response.data.success) {
-        // 結果をチャットに追加
         const result = response.data.result
-        let resultText = '【価格転嫁検討ツール - 分析結果】\n\n'
-        
-        resultText += '【コスト高騰前の状況】\n'
-        resultText += `売上高: ${result.before.sales.toLocaleString()}円\n`
-        resultText += `売上原価: ${result.before.cost.toLocaleString()}円\n`
-        resultText += `販管費・その他経費: ${result.before.expenses.toLocaleString()}円\n`
-        resultText += `総コスト: ${result.before.total_cost.toLocaleString()}円\n`
-        resultText += `利益: ${result.before.profit.toLocaleString()}円\n`
-        resultText += `利益率: ${result.before.profit_rate.toFixed(2)}%\n\n`
-        
-        resultText += '【現在の状況】\n'
-        resultText += `売上高: ${result.current.sales.toLocaleString()}円\n`
-        resultText += `売上原価: ${result.current.cost.toLocaleString()}円\n`
-        resultText += `販管費・その他経費: ${result.current.expenses.toLocaleString()}円\n`
-        resultText += `総コスト: ${result.current.total_cost.toLocaleString()}円\n`
-        resultText += `利益: ${result.current.profit.toLocaleString()}円\n`
-        resultText += `利益率: ${result.current.profit_rate.toFixed(2)}%\n\n`
-        
-        resultText += '【コスト高騰の影響】\n'
-        resultText += `売上高: ${result.changes.sales.amount >= 0 ? '+' : ''}${result.changes.sales.amount.toLocaleString()}円 (${result.changes.sales.rate >= 0 ? '+' : ''}${result.changes.sales.rate.toFixed(2)}%)\n`
-        resultText += `売上原価: ${result.changes.cost.amount >= 0 ? '+' : ''}${result.changes.cost.amount.toLocaleString()}円 (${result.changes.cost.rate >= 0 ? '+' : ''}${result.changes.cost.rate.toFixed(2)}%)\n`
-        resultText += `販管費・その他経費: ${result.changes.expenses.amount >= 0 ? '+' : ''}${result.changes.expenses.amount.toLocaleString()}円 (${result.changes.expenses.rate >= 0 ? '+' : ''}${result.changes.expenses.rate.toFixed(2)}%)\n`
-        resultText += `総コスト: ${result.changes.total_cost.amount >= 0 ? '+' : ''}${result.changes.total_cost.amount.toLocaleString()}円 (${result.changes.total_cost.rate >= 0 ? '+' : ''}${result.changes.total_cost.rate.toFixed(2)}%)\n`
-        resultText += `利益: ${result.changes.profit.amount >= 0 ? '+' : ''}${result.changes.profit.amount.toLocaleString()}円 (${result.changes.profit.rate >= 0 ? '+' : ''}${result.changes.profit.rate.toFixed(2)}%)\n\n`
-        
-        if (result.changes.total_cost.rate > result.changes.sales.rate || result.current.profit_rate < result.before.profit_rate) {
-          resultText += '⚠️ **価格転嫁の必要性**: コスト高騰の影響が大きいため、価格転嫁を検討することをお勧めします。\n\n'
-        } else {
-          resultText += '✅ **現状**: コスト高騰の影響は比較的軽微です。\n\n'
-        }
-        
-        resultText += '【参考価格の算出】\n'
-        resultText += `コスト高騰前の利益率を維持するための参考価格: ${result.reference_price.toLocaleString()}円\n`
-        resultText += `現在の価格との差額: ${result.price_gap >= 0 ? '+' : ''}${result.price_gap.toLocaleString()}円 (${result.price_gap_rate >= 0 ? '+' : ''}${result.price_gap_rate.toFixed(2)}%)\n\n`
-        
-        if (result.price_gap > 0) {
-          resultText += `💡 **推奨**: 価格を ${result.price_gap.toLocaleString()}円 引き上げることで、コスト高騰前の利益率（${result.before.profit_rate.toFixed(2)}%）を維持できます。\n`
-        } else {
-          resultText += '💡 **現状**: 現在の価格でコスト高騰前の利益率を維持できています。\n'
-        }
-
-        // ユーザーメッセージとアシスタントメッセージを追加
-        setMessages(prev => [
-          ...prev,
-          { role: 'user', content: '価格転嫁検討ツールで分析しました' },
-          { role: 'assistant', content: resultText }
-        ])
         
         // モーダルを閉じる
         setShowCostAnalysisModal(false)
@@ -480,6 +454,83 @@ function App() {
           current_cost: '',
           current_expenses: ''
         })
+        
+        // 分析結果をエージェントに送信して、要約と図示を依頼
+        const analysisResultText = `【価格転嫁検討ツール - 分析結果】
+
+【コスト高騰前の状況】
+売上高: ${result.before.sales.toLocaleString()}円
+売上原価: ${result.before.cost.toLocaleString()}円
+販管費・その他経費: ${result.before.expenses.toLocaleString()}円
+総コスト: ${result.before.total_cost.toLocaleString()}円
+利益: ${result.before.profit.toLocaleString()}円
+利益率: ${result.before.profit_rate.toFixed(2)}%
+
+【現在の状況】
+売上高: ${result.current.sales.toLocaleString()}円
+売上原価: ${result.current.cost.toLocaleString()}円
+販管費・その他経費: ${result.current.expenses.toLocaleString()}円
+総コスト: ${result.current.total_cost.toLocaleString()}円
+利益: ${result.current.profit.toLocaleString()}円
+利益率: ${result.current.profit_rate.toFixed(2)}%
+
+【コスト高騰の影響】
+売上高: ${result.changes.sales.amount >= 0 ? '+' : ''}${result.changes.sales.amount.toLocaleString()}円 (${result.changes.sales.rate >= 0 ? '+' : ''}${result.changes.sales.rate.toFixed(2)}%)
+売上原価: ${result.changes.cost.amount >= 0 ? '+' : ''}${result.changes.cost.amount.toLocaleString()}円 (${result.changes.cost.rate >= 0 ? '+' : ''}${result.changes.cost.rate.toFixed(2)}%)
+販管費・その他経費: ${result.changes.expenses.amount >= 0 ? '+' : ''}${result.changes.expenses.amount.toLocaleString()}円 (${result.changes.expenses.rate >= 0 ? '+' : ''}${result.changes.expenses.rate.toFixed(2)}%)
+総コスト: ${result.changes.total_cost.amount >= 0 ? '+' : ''}${result.changes.total_cost.amount.toLocaleString()}円 (${result.changes.total_cost.rate >= 0 ? '+' : ''}${result.changes.total_cost.rate.toFixed(2)}%)
+利益: ${result.changes.profit.amount >= 0 ? '+' : ''}${result.changes.profit.amount.toLocaleString()}円 (${result.changes.profit.rate >= 0 ? '+' : ''}${result.changes.profit.rate.toFixed(2)}%)
+
+【参考価格の算出】
+コスト高騰前の利益率を維持するための参考価格: ${result.reference_price.toLocaleString()}円
+現在の価格との差額: ${result.price_gap >= 0 ? '+' : ''}${result.price_gap.toLocaleString()}円 (${result.price_gap_rate >= 0 ? '+' : ''}${result.price_gap_rate.toFixed(2)}%)`
+
+        // 図生成用のデータも含める
+        const dataValues = [
+          result.before.sales / 1000000,
+          result.before.cost / 1000000,
+          result.before.expenses / 1000000,
+          result.before.total_cost / 1000000,
+          result.before.profit / 1000000,
+          result.current.sales / 1000000,
+          result.current.cost / 1000000,
+          result.current.expenses / 1000000,
+          result.current.total_cost / 1000000,
+          result.current.profit / 1000000,
+        ]
+        
+        const labelsList = [
+          "売上高(前)",
+          "売上原価(前)",
+          "販管費(前)",
+          "総コスト(前)",
+          "利益(前)",
+          "売上高(現在)",
+          "売上原価(現在)",
+          "販管費(現在)",
+          "総コスト(現在)",
+          "利益(現在)"
+        ]
+        
+        const diagramData = JSON.stringify({
+          data: dataValues,
+          labels: labelsList
+        }, null, 2)
+        
+        // エージェントに要約と図示を依頼（内部処理として、画面には表示しない）
+        const agentRequest = `価格転嫁検討ツールで分析しました。以下の分析結果を要約して、分かりやすく説明してください。また、このデータを使って generate_diagram ツールで棒グラフも生成してください。
+
+${analysisResultText}
+
+【図示用データ】
+${diagramData}
+
+このデータを使って、コスト高騰前と現在の売上高、売上原価、販管費、総コスト、利益を比較する棒グラフを作成してください。`
+        
+        // エージェントに送信（ユーザーメッセージは表示しない）
+        setTimeout(() => {
+          handleSend(agentRequest, true) // 第2引数でユーザーメッセージの表示をスキップ
+        }, 300)
       } else {
         alert(`分析エラー: ${response.data.message}`)
       }
@@ -699,24 +750,6 @@ function App() {
       {currentStep && (
         <div className="step-indicator">
           📌 現在のステップ: <strong>{formatStepName(currentStep)}</strong>
-          {currentStep === 'STEP_0_CHECK_3' && (
-            <button
-              onClick={() => setShowCostAnalysisModal(true)}
-              className="cost-analysis-button"
-              style={{
-                marginLeft: '1rem',
-                padding: '0.5rem 1rem',
-                backgroundColor: '#2a2a2a',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontSize: '0.875rem'
-              }}
-            >
-              📊 価格転嫁検討ツール
-            </button>
-          )}
         </div>
       )}
 
@@ -734,9 +767,42 @@ function App() {
                 <div className={`message ${msg.role}`}>
                   <div className="message-content">
                     <ReactMarkdown>{msg.content}</ReactMarkdown>
-                    {isAssistantLoading && <span className="cursor">▌</span>}
+                    {isAssistantLoading && currentStatus && (
+                      <div className="status-message">
+                        {currentStatus}
+                      </div>
+                    )}
+                    {/* テキストが生成されている場合のみカーソルを表示（ステータス表示中は非表示） */}
+                    {isAssistantLoading && !currentStatus && currentResponseRef.current.trim() && (
+                      <span className="cursor">▌</span>
+                    )}
                   </div>
                 </div>
+                {/* アシスタントメッセージの下に価格転嫁検討ツールのボタンを表示（STEP_0_CHECK_9の場合） */}
+                {msg.role === 'assistant' && !isAssistantLoading && currentStep === 'STEP_0_CHECK_9' && idx === messages.length - 1 && (
+                  <div style={{ marginTop: '0.5rem', marginBottom: '1rem', paddingLeft: '1rem' }}>
+                    <button
+                      onClick={() => setShowCostAnalysisModal(true)}
+                      className="cost-analysis-button"
+                      style={{
+                        padding: '0.75rem 1.5rem',
+                        backgroundColor: '#2a2a2a',
+                        color: '#ffffff',
+                        border: 'none',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        fontSize: '0.9375rem',
+                        fontWeight: '500',
+                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
+                        transition: 'background-color 0.2s'
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#3a3a3a'}
+                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#2a2a2a'}
+                    >
+                      📊 価格転嫁検討ツールで分析する
+                    </button>
+                  </div>
+                )}
                 {/* 図が紐づいているメッセージの直後に図を表示 */}
                 {hasDiagram && (
                   <div className="diagram-container">
@@ -750,8 +816,16 @@ function App() {
           {isLoading && messages.length > 0 && messages[messages.length - 1].role !== 'assistant' && (
             <div className="message assistant">
               <div className="message-content">
-                <ReactMarkdown>{currentResponseRef.current || '考え中...'}</ReactMarkdown>
-                <span className="cursor">▌</span>
+                <ReactMarkdown>{currentResponseRef.current || ''}</ReactMarkdown>
+                {currentStatus && (
+                  <div className="status-message">
+                    {currentStatus}
+                  </div>
+                )}
+                {/* テキストが生成されている場合のみカーソルを表示（ステータス表示中は非表示） */}
+                {!currentStatus && currentResponseRef.current.trim() && (
+                  <span className="cursor">▌</span>
+                )}
               </div>
             </div>
           )}
@@ -777,7 +851,7 @@ function App() {
             </button>
           ) : (
             <button
-              onClick={handleSend}
+              onClick={() => handleSend()}
               disabled={!input.trim() || !sessionId}
               className="send-button"
             >

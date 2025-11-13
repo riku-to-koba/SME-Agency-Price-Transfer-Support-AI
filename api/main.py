@@ -187,76 +187,12 @@ async def chat_endpoint(request: ChatMessage):
     user_message = {"role": "user", "content": request.message}
     session["messages"].append(user_message)
     
-    # ============================================================================
-    # ステップ判定を最初に実行（質問の最初にステップ判定を行う）
-    # ============================================================================
-    print(f"\n{'='*80}")
-    print(f"[DEBUG] ========== 質問の最初にステップ判定を実行 ==========")
-    print(f"[DEBUG] ユーザーの質問: {request.message}")
-    print(f"{'='*80}\n")
-    
-    # 会話履歴から文脈を構築（直近5件のメッセージ）
-    conversation_context = ""
-    recent_messages = session["messages"][-5:]  # 直近5件
-    for msg in recent_messages:
-        role = msg.get("role", "unknown")
-        content = msg.get("content", "")
-        if role == "user":
-            conversation_context += f"ユーザー: {content}\n"
-        elif role == "assistant":
-            conversation_context += f"アシスタント: {content[:200]}...\n"  # 長い場合は省略
-    
-    # ステップ判定を実行（同期関数なので直接呼び出し可能）
-    # 変数を最初に初期化
-    detected_step = None
-    confidence = "不明"
-    reasoning = "理由なし"
-    step_updated = False
-    
-    try:
-        step_result_json = detect_current_step(
-            user_question=request.message,
-            conversation_context=conversation_context
-        )
-        
-        # JSON結果をパース
-        step_result = json.loads(step_result_json)
-        detected_step = step_result.get("step")
-        confidence = step_result.get("confidence", "不明")
-        reasoning = step_result.get("reasoning", "理由なし")
-        
-        print(f"[DEBUG] ステップ判定結果:")
-        print(f"  - ステップ: {detected_step}")
-        print(f"  - 信頼度: {confidence}")
-        print(f"  - 理由: {reasoning}\n")
-        
-        # ステップが有効で、現在のステップと異なる場合のみ更新
-        if detected_step and detected_step != "UNKNOWN":
-            current_step = session.get("current_step")
-            if current_step != detected_step:
-                print(f"[DEBUG] ✅ ステップを更新: {current_step} -> {detected_step}")
-                session["current_step"] = detected_step
-                # エージェントを新しいステップで再初期化
-                session["agent"].update_step(detected_step)
-                print(f"[DEBUG] ✅ エージェント再初期化完了（新しいプロンプトで）\n")
-                step_updated = True
-            else:
-                print(f"[DEBUG] ℹ️ ステップは既に設定済み: {detected_step}\n")
-        else:
-            print(f"[DEBUG] ⚠️ ステップが判定できませんでした（UNKNOWN）\n")
-            
-    except Exception as e:
-        print(f"[DEBUG] ❌ ステップ判定エラー: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        print(f"[DEBUG] ⚠️ エラーが発生しましたが、処理を続行します\n")
-    
-    # ステップ更新情報を保存（ストリーミング開始時に送信するため）
+    # ステップ更新情報を保存（ストリーミング内で実行するため）
     step_update_info = {
-        "step": detected_step,
-        "confidence": confidence,
-        "reasoning": reasoning,
-        "updated": step_updated
+        "step": None,
+        "confidence": "不明",
+        "reasoning": "理由なし",
+        "updated": False
     }
     
     async def stream_response():
@@ -265,8 +201,94 @@ async def chat_endpoint(request: ChatMessage):
         has_content = False
         current_tool = None
         is_cancelled = False
+        is_thinking = True  # 最初は思考中
         
-        # ステップ更新情報があれば、最初に送信
+        # ツール名から日本語メッセージへのマッピング
+        tool_status_messages = {
+            "web_search": "検索中...",
+            "search_knowledge_base": "検索中...",
+            "generate_diagram": "図を生成中...",
+            "calculator": "計算中...",
+            "detect_current_step": "ステップを判定中...",
+            "analyze_cost_impact": "コスト分析中...",
+            "current_time": "時刻を取得中...",
+        }
+        
+        # 最初に「思考中」を送信
+        yield f"data: {json.dumps({'type': 'status', 'status': 'thinking', 'message': '思考中...'}, ensure_ascii=False)}\n\n"
+        
+        # ============================================================================
+        # ステップ判定を最初に実行（質問の最初にステップ判定を行う）
+        # ============================================================================
+        print(f"\n{'='*80}")
+        print(f"[DEBUG] ========== 質問の最初にステップ判定を実行 ==========")
+        print(f"[DEBUG] ユーザーの質問: {request.message}")
+        print(f"{'='*80}\n")
+        
+        # 会話履歴から文脈を構築（直近5件のメッセージ）
+        conversation_context = ""
+        recent_messages = session["messages"][-5:]  # 直近5件
+        for msg in recent_messages:
+            role = msg.get("role", "unknown")
+            content = msg.get("content", "")
+            if role == "user":
+                conversation_context += f"ユーザー: {content}\n"
+            elif role == "assistant":
+                conversation_context += f"アシスタント: {content[:200]}...\n"  # 長い場合は省略
+        
+        # ステップ判定を実行（非同期で実行してブロックしないようにする）
+        step_updated = False  # 初期化
+        try:
+            # 同期関数を非同期で実行
+            import concurrent.futures
+            loop = asyncio.get_event_loop()
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                step_result_json = await loop.run_in_executor(
+                    executor,
+                    detect_current_step,
+                    request.message,
+                    conversation_context
+                )
+            
+            # JSON結果をパース
+            step_result = json.loads(step_result_json)
+            detected_step = step_result.get("step")
+            confidence = step_result.get("confidence", "不明")
+            reasoning = step_result.get("reasoning", "理由なし")
+            
+            print(f"[DEBUG] ステップ判定結果:")
+            print(f"  - ステップ: {detected_step}")
+            print(f"  - 信頼度: {confidence}")
+            print(f"  - 理由: {reasoning}\n")
+            
+            # ステップが有効で、現在のステップと異なる場合のみ更新
+            if detected_step and detected_step != "UNKNOWN":
+                current_step = session.get("current_step")
+                if current_step != detected_step:
+                    print(f"[DEBUG] ✅ ステップを更新: {current_step} -> {detected_step}")
+                    session["current_step"] = detected_step
+                    # エージェントを新しいステップで再初期化
+                    session["agent"].update_step(detected_step)
+                    print(f"[DEBUG] ✅ エージェント再初期化完了（新しいプロンプトで）\n")
+                    step_updated = True
+                else:
+                    print(f"[DEBUG] ℹ️ ステップは既に設定済み: {detected_step}\n")
+            else:
+                print(f"[DEBUG] ⚠️ ステップが判定できませんでした（UNKNOWN）\n")
+            
+            # ステップ更新情報を保存
+            step_update_info["step"] = detected_step
+            step_update_info["confidence"] = confidence
+            step_update_info["reasoning"] = reasoning
+            step_update_info["updated"] = step_updated
+            
+        except Exception as e:
+            print(f"[DEBUG] ❌ ステップ判定エラー: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            print(f"[DEBUG] ⚠️ エラーが発生しましたが、処理を続行します\n")
+        
+        # ステップ更新情報があれば、送信
         if step_update_info.get("updated") and step_update_info.get("step"):
             yield f"data: {json.dumps({'type': 'step_update', 'step': step_update_info['step'], 'confidence': step_update_info['confidence'], 'reasoning': step_update_info['reasoning']}, ensure_ascii=False)}\n\n"
         
@@ -278,7 +300,11 @@ async def chat_endpoint(request: ChatMessage):
                 # クライアント切断をチェック（非同期ジェネレータの中断を検知）
                 try:
                     if "data" in event:
-                        # テキストチャンク
+                        # テキストチャンクが来たら思考中を解除
+                        if is_thinking:
+                            is_thinking = False
+                            yield f"data: {json.dumps({'type': 'status', 'status': 'none', 'message': ''}, ensure_ascii=False)}\n\n"
+                        
                         if not has_content:
                             has_content = True
                         
@@ -294,16 +320,24 @@ async def chat_endpoint(request: ChatMessage):
                         tool_name = event["current_tool_use"]["name"]
                         if tool_name != current_tool:
                             current_tool = tool_name
+                            is_thinking = False  # ツール使用中は思考中ではない
                             print(f"[DEBUG] ツール使用中: {tool_name}")
+                            
+                            # ツール使用中のステータスメッセージを送信
+                            status_message = tool_status_messages.get(tool_name, f"{tool_name}を実行中...")
+                            yield f"data: {json.dumps({'type': 'status', 'status': 'tool_use', 'tool': tool_name, 'message': status_message}, ensure_ascii=False)}\n\n"
                             
                             # analyze_cost_impactツールの場合は、フロントエンドにモーダル表示イベントを送信
                             if tool_name == "analyze_cost_impact":
                                 yield f"data: {json.dumps({'type': 'tool_use', 'tool': tool_name, 'show_modal': True}, ensure_ascii=False)}\n\n"
-                            else:
-                                # その他のツールはログのみ
-                                pass
                     
                     elif "tool_result" in event:
+                        # ツール結果が来たら、ステータスをクリアして思考中に戻す
+                        if current_tool:
+                            current_tool = None
+                            is_thinking = True
+                            yield f"data: {json.dumps({'type': 'status', 'status': 'thinking', 'message': '思考中...'}, ensure_ascii=False)}\n\n"
+                        
                         # ツール結果を検知（detect_current_stepは既に質問の最初で実行済み）
                         tool_use = event.get("tool_use", {})
                         if tool_use.get("name") == "detect_current_step":
@@ -323,6 +357,9 @@ async def chat_endpoint(request: ChatMessage):
             
             # クライアントが切断されていない場合のみ最終処理
             if not is_cancelled:
+                # ステータスをクリア
+                yield f"data: {json.dumps({'type': 'status', 'status': 'none', 'message': ''}, ensure_ascii=False)}\n\n"
+                
                 # 最終応答を処理
                 display_response = re.sub(r'\[IMAGE_PATH:[^\]]*\]', '', full_response).strip()
                 display_response = re.sub(r'\[DIAGRAM_IMAGE\].+?\[/DIAGRAM_IMAGE\]', '', display_response).strip()
@@ -432,7 +469,8 @@ async def get_diagram(filename: str):
 async def cost_analysis_endpoint(request: CostAnalysisRequest):
     """価格転嫁検討ツール - コスト高騰影響分析
     
-    このエンドポイントはSTEP_0_CHECK_3（原価計算の実施）の時のみ使用可能です。
+    このエンドポイントはSTEP_0_CHECK_9（価格転嫁の必要性判定）で使用します。
+    価格転嫁の必要性を判定するためのツールで、営業利益が赤字になっているかを調査します。
     """
     try:
         # セッションのcurrent_stepをチェック（オプション）

@@ -1,4 +1,4 @@
-"""価格転嫁検討ツール（CHECK 3専用）"""
+"""価格転嫁検討ツール（CHECK 9専用）"""
 from strands import tool
 
 
@@ -114,8 +114,11 @@ def analyze_cost_impact(
 ) -> str:
     """コスト高騰の影響を分析し、参考価格を算出します。
     
-    このツールはSTEP_0_CHECK_3（原価計算の実施）で使用します。
+    このツールはSTEP_0_CHECK_9（価格転嫁の必要性判定）で使用します。
     中小企業庁の価格転嫁検討ツール（kakakutenka.smrj.go.jp）のロジックを実装しています。
+    
+    価格転嫁の必要性を判定するためのツールで、営業利益が赤字になっているかを調査します。
+    原価計算ができている前提で、コスト高騰の影響を分析し、価格転嫁が必要かどうかを判断します。
     
     【使用タイミング】
     - ユーザーがコスト高騰前と現在の数値（売上高、売上原価、販管費など）を提供した場合
@@ -213,7 +216,52 @@ def analyze_cost_impact(
         else:
             result_text += "💡 **現状**: 現在の価格でコスト高騰前の利益率を維持できています。\n"
         
-        print(f"✅ [価格転嫁検討ツール] 分析完了\n")
+        # 図生成の指示を追加（エージェントがgenerate_diagramツールを呼び出すように）
+        import json
+        
+        # 百万円単位に変換したデータを準備
+        data_values = [
+            result['before']['sales'] / 1000000,
+            result['before']['cost'] / 1000000,
+            result['before']['expenses'] / 1000000,
+            result['before']['total_cost'] / 1000000,
+            result['before']['profit'] / 1000000,
+            result['current']['sales'] / 1000000,
+            result['current']['cost'] / 1000000,
+            result['current']['expenses'] / 1000000,
+            result['current']['total_cost'] / 1000000,
+            result['current']['profit'] / 1000000,
+        ]
+        
+        labels_list = [
+            "売上高(前)",
+            "売上原価(前)",
+            "販管費(前)",
+            "総コスト(前)",
+            "利益(前)",
+            "売上高(現在)",
+            "売上原価(現在)",
+            "販管費(現在)",
+            "総コスト(現在)",
+            "利益(現在)"
+        ]
+        
+        # JSON形式でデータを準備
+        comparison_data_json = json.dumps({
+            "data": data_values,
+            "labels": labels_list
+        }, ensure_ascii=False)
+        
+        result_text += "\n\n"
+        result_text += "【図示の指示 - 必須実行】\n"
+        result_text += "この分析結果を視覚化するため、以下のデータを使って `generate_diagram` ツールで棒グラフを生成してください。\n\n"
+        result_text += f"**図のタイトル**: コスト高騰前と現在の比較\n"
+        result_text += f"**図の種類**: bar_chart\n"
+        result_text += f"**データ**: {comparison_data_json}\n\n"
+        result_text += "**重要**: この指示を見たら、すぐに `generate_diagram` ツールを呼び出してください。\n"
+        result_text += "パラメータ: diagram_type='bar_chart', title='コスト高騰前と現在の比較', descriptionに上記のJSONデータを含めてください。\n"
+        
+        print(f"✅ [価格転嫁検討ツール] 分析完了（図生成指示を含む）\n")
         
         return result_text
         

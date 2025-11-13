@@ -28,6 +28,7 @@ def detect_current_step(user_question: str, conversation_context: str = "") -> s
     - STEP_0_CHECK_6: 取引先の経営方針・業績把握
     - STEP_0_CHECK_7: 自社の付加価値の明確化
     - STEP_0_CHECK_8: 適正な取引慣行の確認
+    - STEP_0_CHECK_9: 価格転嫁の必要性判定
 
     ### 価格交渉実践編（STEP 1-5）
     - STEP_1: 業界動向の情報収集
@@ -78,6 +79,7 @@ def detect_current_step(user_question: str, conversation_context: str = "") -> s
 - STEP_0_CHECK_6: 取引先の経営方針・業績把握
 - STEP_0_CHECK_7: 自社の付加価値の明確化
 - STEP_0_CHECK_8: 適正な取引慣行の確認
+- STEP_0_CHECK_9: 価格転嫁の必要性判定
 - STEP_1: 業界動向の情報収集
 - STEP_2: 取引先情報収集と交渉方針検討
 - STEP_3: 書面での申し入れ
