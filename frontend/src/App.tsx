@@ -31,6 +31,26 @@ interface UserInfo {
   priceTransferStatus?: string
 }
 
+// ステップ名をユーザー向けに変換
+function formatStepName(step: string): string {
+  const stepMap: { [key: string]: string } = {
+    'STEP_0_CHECK_1': '価格交渉準備編 - 取引条件・業務内容の確認',
+    'STEP_0_CHECK_2': '価格交渉準備編 - 原材料費・労務費データの定期収集',
+    'STEP_0_CHECK_3': '価格交渉準備編 - 原価計算の実施',
+    'STEP_0_CHECK_4': '価格交渉準備編 - 単価表の作成',
+    'STEP_0_CHECK_5': '価格交渉準備編 - 見積書フォーマットの整備',
+    'STEP_0_CHECK_6': '価格交渉準備編 - 取引先の経営方針・業績把握',
+    'STEP_0_CHECK_7': '価格交渉準備編 - 自社の付加価値の明確化',
+    'STEP_0_CHECK_8': '価格交渉準備編 - 適正な取引慣行の確認',
+    'STEP_1': '価格交渉実践編 - 業界動向の情報収集',
+    'STEP_2': '価格交渉実践編 - 取引先情報収集と交渉方針検討',
+    'STEP_3': '価格交渉実践編 - 書面での申し入れ',
+    'STEP_4': '価格交渉実践編 - 説明資料の準備',
+    'STEP_5': '価格交渉実践編 - 発注後に発生する価格交渉',
+  }
+  return stepMap[step] || step
+}
+
 function App() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
@@ -38,21 +58,29 @@ function App() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [currentStep, setCurrentStep] = useState<string | null>(null)
   const [latestDiagram, setLatestDiagram] = useState<string | null>(null)
+  const [diagramMessageIndex, setDiagramMessageIndex] = useState<number | null>(null) // 図が紐づくメッセージのインデックス
   const [showUserInfoModal, setShowUserInfoModal] = useState(true)
   const [userInfo, setUserInfo] = useState<UserInfo>({})
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const currentResponseRef = useRef<string>('')
+  const abortControllerRef = useRef<AbortController | null>(null)
+  const previousDiagramUrlRef = useRef<string | null>(null)
 
   // セッション初期化（ユーザー情報入力後）
   const initSession = async (userInfo: UserInfo) => {
     try {
+      // 図をクリア
+      setLatestDiagram(null)
+      setDiagramMessageIndex(null)
+      previousDiagramUrlRef.current = null
+      
       const response = await axios.post(`${API_BASE_URL}/api/session`, { user_info: userInfo })
       setSessionId(response.data.session_id)
       
       // ウェルカムメッセージ（ユーザー情報に基づいてカスタマイズ）
       let welcomeContent = `こんにちは！価格転嫁支援AIアシスタントです。
 
-私は中小企業の皆様の価格転嫁をサポートするために設計されました。`
+皆様の価格転嫁をサポートさせていただきます。`
 
       if (userInfo.industry || userInfo.products) {
         welcomeContent += `\n\n`
@@ -98,30 +126,94 @@ function App() {
     initSession(userInfo)
   }
 
-  // 最新の図を取得
+  // 最新の図を取得（セッションに紐づく）
   useEffect(() => {
+    if (!sessionId) {
+      setLatestDiagram(null)
+      setDiagramMessageIndex(null)
+      previousDiagramUrlRef.current = null
+      return
+    }
+
     const fetchLatestDiagram = async () => {
       try {
-        const response = await axios.get(`${API_BASE_URL}/api/diagrams/latest`)
+        const response = await axios.get(`${API_BASE_URL}/api/diagrams/latest`, {
+          params: { session_id: sessionId }
+        })
         if (response.data.diagram) {
           // URLを直接使用
-          setLatestDiagram(response.data.diagram.url)
+          const newDiagramUrl = response.data.diagram.url
+          
+          // 図が新しく生成された場合（URLが変わった場合）
+          if (newDiagramUrl !== previousDiagramUrlRef.current) {
+            previousDiagramUrlRef.current = newDiagramUrl
+            // diagramMessageIndexは別のuseEffectで更新
+          }
+          
+          setLatestDiagram(newDiagramUrl)
         } else {
           setLatestDiagram(null)
+          setDiagramMessageIndex(null)
+          previousDiagramUrlRef.current = null
         }
       } catch (error) {
         console.error('図の取得エラー:', error)
       }
     }
     
+    fetchLatestDiagram() // 初回取得
     const interval = setInterval(fetchLatestDiagram, 2000) // 2秒ごとにチェック
     return () => clearInterval(interval)
-  }, [])
+  }, [sessionId])
+  
+  // 図が新しく生成されたとき、またはメッセージが更新されたときに、図が紐づくメッセージインデックスを更新
+  useEffect(() => {
+    // 図が存在し、メッセージがある場合
+    if (latestDiagram && messages.length > 0) {
+      // 図が新しく生成された場合（previousDiagramUrlRefと異なる場合）、インデックスを更新
+      const isNewDiagram = latestDiagram !== previousDiagramUrlRef.current
+      
+      if (isNewDiagram || diagramMessageIndex === null) {
+        // 最後のアシスタントメッセージのインデックスを探す
+        for (let i = messages.length - 1; i >= 0; i--) {
+          if (messages[i].role === 'assistant') {
+            setDiagramMessageIndex(i)
+            break
+          }
+        }
+      }
+    } else if (!latestDiagram) {
+      // 図がなくなった場合はインデックスもクリア
+      setDiagramMessageIndex(null)
+    }
+  }, [messages, latestDiagram, diagramMessageIndex])
 
   // メッセージが更新されたらスクロール
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  const handleStop = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort()
+      abortControllerRef.current = null
+      setIsLoading(false)
+      
+      // 停止メッセージを追加
+      if (currentResponseRef.current) {
+        setMessages(prev => {
+          const newMessages = [...prev]
+          if (newMessages.length > 0 && newMessages[newMessages.length - 1].role === 'assistant') {
+            newMessages[newMessages.length - 1] = {
+              role: 'assistant',
+              content: currentResponseRef.current + '\n\n*[応答が停止されました]*',
+            }
+          }
+          return newMessages
+        })
+      }
+    }
+  }
 
   const handleSend = async () => {
     if (!input.trim() || !sessionId || isLoading) return
@@ -131,6 +223,9 @@ function App() {
     setInput('')
     setIsLoading(true)
     currentResponseRef.current = ''
+
+    // AbortControllerを作成
+    abortControllerRef.current = new AbortController()
 
     try {
       const response = await fetch(`${API_BASE_URL}/api/chat`, {
@@ -142,6 +237,7 @@ function App() {
           message: input,
           session_id: sessionId,
         }),
+        signal: abortControllerRef.current.signal,
       })
 
       if (!response.ok) {
@@ -158,113 +254,112 @@ function App() {
       // アシスタントメッセージを追加（最初のcontentイベントで更新される）
       let hasAddedAssistantMessage = false
 
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
 
-        const chunk = decoder.decode(value)
-        const lines = chunk.split('\n')
+          const chunk = decoder.decode(value)
+          const lines = chunk.split('\n')
 
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const event: ChatEvent = JSON.parse(line.slice(6))
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const event: ChatEvent = JSON.parse(line.slice(6))
 
-              if (event.type === 'content') {
-                currentResponseRef.current = event.data || ''
-                
-                // 最初のcontentイベントでアシスタントメッセージを追加
-                if (!hasAddedAssistantMessage) {
-                  hasAddedAssistantMessage = true
-                  setMessages(prev => [...prev, { role: 'assistant', content: currentResponseRef.current }])
-                } else {
-                  // 既存のメッセージを更新
-                  setMessages(prev => {
-                    const newMessages = [...prev]
-                    newMessages[newMessages.length - 1] = {
-                      role: 'assistant',
-                      content: currentResponseRef.current,
-                    }
-                    return newMessages
-                  })
+                if (event.type === 'content') {
+                  currentResponseRef.current = event.data || ''
+                  
+                  // 最初のcontentイベントでアシスタントメッセージを追加
+                  if (!hasAddedAssistantMessage) {
+                    hasAddedAssistantMessage = true
+                    setMessages(prev => [...prev, { role: 'assistant', content: currentResponseRef.current }])
+                  } else {
+                    // 既存のメッセージを更新
+                    setMessages(prev => {
+                      const newMessages = [...prev]
+                      newMessages[newMessages.length - 1] = {
+                        role: 'assistant',
+                        content: currentResponseRef.current,
+                      }
+                      return newMessages
+                    })
+                  }
+                } else if (event.type === 'tool_use') {
+                  // ツール使用中はログのみ（ユーザーには表示しない）
+                  console.log(`[ツール使用中] ${event.tool}`)
+                } else if (event.type === 'step_update') {
+                  setCurrentStep(event.step || null)
+                  // ステップ更新通知をメッセージに追加（ユーザー向けに分かりやすく）
+                  const formattedStep = formatStepName(event.step || '')
+                  const stepMessage = `\n\n**📌 現在のステップ: ${formattedStep}**\n\n`
+                  currentResponseRef.current += stepMessage
+                  
+                  // アシスタントメッセージがまだ追加されていない場合は追加
+                  if (!hasAddedAssistantMessage) {
+                    hasAddedAssistantMessage = true
+                    setMessages(prev => [...prev, { role: 'assistant', content: currentResponseRef.current }])
+                  } else {
+                    setMessages(prev => {
+                      const newMessages = [...prev]
+                      newMessages[newMessages.length - 1] = {
+                        role: 'assistant',
+                        content: currentResponseRef.current,
+                      }
+                      return newMessages
+                    })
+                  }
+                } else if (event.type === 'done') {
+                  // アシスタントメッセージがまだ追加されていない場合は追加
+                  if (!hasAddedAssistantMessage) {
+                    hasAddedAssistantMessage = true
+                    setMessages(prev => [...prev, { role: 'assistant', content: event.content || currentResponseRef.current }])
+                  } else {
+                    setMessages(prev => {
+                      const newMessages = [...prev]
+                      newMessages[newMessages.length - 1] = {
+                        role: 'assistant',
+                        content: event.content || currentResponseRef.current,
+                      }
+                      return newMessages
+                    })
+                  }
+                } else if (event.type === 'error') {
+                  // エラー時は必ずメッセージを追加
+                  if (!hasAddedAssistantMessage) {
+                    hasAddedAssistantMessage = true
+                    setMessages(prev => [...prev, { role: 'assistant', content: `❌ エラー: ${event.error}` }])
+                  } else {
+                    setMessages(prev => {
+                      const newMessages = [...prev]
+                      newMessages[newMessages.length - 1] = {
+                        role: 'assistant',
+                        content: `❌ エラー: ${event.error}`,
+                      }
+                      return newMessages
+                    })
+                  }
                 }
-              } else if (event.type === 'tool_use') {
-                // ツール使用中の表示
-                const toolMessage = `\n\n*[${event.tool} を使用中]*\n\n`
-                currentResponseRef.current += toolMessage
-                
-                // アシスタントメッセージがまだ追加されていない場合は追加
-                if (!hasAddedAssistantMessage) {
-                  hasAddedAssistantMessage = true
-                  setMessages(prev => [...prev, { role: 'assistant', content: currentResponseRef.current }])
-                } else {
-                  setMessages(prev => {
-                    const newMessages = [...prev]
-                    newMessages[newMessages.length - 1] = {
-                      role: 'assistant',
-                      content: currentResponseRef.current,
-                    }
-                    return newMessages
-                  })
-                }
-              } else if (event.type === 'step_update') {
-                setCurrentStep(event.step || null)
-                // ステップ更新通知をメッセージに追加
-                const stepMessage = `\n\n**📌 ステップ判定: ${event.step}** (信頼度: ${event.confidence})\n${event.reasoning}\n\n`
-                currentResponseRef.current += stepMessage
-                
-                // アシスタントメッセージがまだ追加されていない場合は追加
-                if (!hasAddedAssistantMessage) {
-                  hasAddedAssistantMessage = true
-                  setMessages(prev => [...prev, { role: 'assistant', content: currentResponseRef.current }])
-                } else {
-                  setMessages(prev => {
-                    const newMessages = [...prev]
-                    newMessages[newMessages.length - 1] = {
-                      role: 'assistant',
-                      content: currentResponseRef.current,
-                    }
-                    return newMessages
-                  })
-                }
-              } else if (event.type === 'done') {
-                // アシスタントメッセージがまだ追加されていない場合は追加
-                if (!hasAddedAssistantMessage) {
-                  hasAddedAssistantMessage = true
-                  setMessages(prev => [...prev, { role: 'assistant', content: event.content || currentResponseRef.current }])
-                } else {
-                  setMessages(prev => {
-                    const newMessages = [...prev]
-                    newMessages[newMessages.length - 1] = {
-                      role: 'assistant',
-                      content: event.content || currentResponseRef.current,
-                    }
-                    return newMessages
-                  })
-                }
-              } else if (event.type === 'error') {
-                // エラー時は必ずメッセージを追加
-                if (!hasAddedAssistantMessage) {
-                  hasAddedAssistantMessage = true
-                  setMessages(prev => [...prev, { role: 'assistant', content: `❌ エラー: ${event.error}` }])
-                } else {
-                  setMessages(prev => {
-                    const newMessages = [...prev]
-                    newMessages[newMessages.length - 1] = {
-                      role: 'assistant',
-                      content: `❌ エラー: ${event.error}`,
-                    }
-                    return newMessages
-                  })
-                }
+              } catch (e) {
+                console.error('イベントパースエラー:', e)
               }
-            } catch (e) {
-              console.error('イベントパースエラー:', e)
             }
           }
         }
+      } catch (error: any) {
+        // AbortErrorの場合は停止されたので、エラーを表示しない
+        if (error.name === 'AbortError') {
+          console.log('ストリーミングが停止されました')
+          return
+        }
+        throw error
       }
-    } catch (error) {
+    } catch (error: any) {
+      // AbortErrorの場合は停止されたので、エラーを表示しない
+      if (error.name === 'AbortError') {
+        console.log('リクエストが停止されました')
+        return
+      }
       console.error('チャットエラー:', error)
       setMessages(prev => [
         ...prev,
@@ -272,6 +367,7 @@ function App() {
       ])
     } finally {
       setIsLoading(false)
+      abortControllerRef.current = null
     }
   }
 
@@ -279,17 +375,21 @@ function App() {
     if (!sessionId) return
 
     try {
+      // 図を先にクリア
+      setLatestDiagram(null)
+      setDiagramMessageIndex(null)
+      previousDiagramUrlRef.current = null
+      
       await axios.post(`${API_BASE_URL}/api/session/${sessionId}/clear`)
       setMessages([])
       setCurrentStep(null)
-      setLatestDiagram(null)
       
       // ウェルカムメッセージを再表示
       const welcomeMessage: Message = {
         role: 'assistant',
         content: `こんにちは！価格転嫁支援AIアシスタントです。
 
-私は中小企業の皆様の価格転嫁をサポートするために設計されました。
+皆様の価格転嫁をサポートさせていただきます。
 
 **できること:**
 価格転嫁プロセス（準備編・実践編）の各ステップについてアドバイス
@@ -478,7 +578,7 @@ function App() {
 
       {currentStep && (
         <div className="step-indicator">
-          📌 現在のステップ: <strong>{currentStep}</strong>
+          📌 現在のステップ: <strong>{formatStepName(currentStep)}</strong>
         </div>
       )}
 
@@ -488,13 +588,24 @@ function App() {
             // 最後のメッセージがアシスタントで、かつローディング中の場合、カーソルを表示
             const isLastMessage = idx === messages.length - 1
             const isAssistantLoading = isLastMessage && msg.role === 'assistant' && isLoading
+            // このメッセージに図が紐づいているかどうか
+            const hasDiagram = msg.role === 'assistant' && diagramMessageIndex === idx && latestDiagram
             
             return (
-              <div key={idx} className={`message ${msg.role}`}>
-                <div className="message-content">
-                  <ReactMarkdown>{msg.content}</ReactMarkdown>
-                  {isAssistantLoading && <span className="cursor">▌</span>}
+              <div key={idx}>
+                <div className={`message ${msg.role}`}>
+                  <div className="message-content">
+                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    {isAssistantLoading && <span className="cursor">▌</span>}
+                  </div>
                 </div>
+                {/* 図が紐づいているメッセージの直後に図を表示 */}
+                {hasDiagram && (
+                  <div className="diagram-container">
+                    <h3>📊 生成された図</h3>
+                    <img src={`${API_BASE_URL}${latestDiagram}`} alt="生成された図" className="diagram-image" />
+                  </div>
+                )}
               </div>
             )
           })}
@@ -509,30 +620,32 @@ function App() {
           <div ref={messagesEndRef} />
         </div>
 
-        {latestDiagram && (
-          <div className="diagram-container">
-            <h3>📊 生成された図</h3>
-            <img src={`${API_BASE_URL}${latestDiagram}`} alt="生成された図" className="diagram-image" />
-          </div>
-        )}
-
         <div className="input-container">
           <input
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            onKeyPress={(e) => e.key === 'Enter' && handleSend()}
+            onKeyPress={(e) => e.key === 'Enter' && !isLoading && handleSend()}
             placeholder="メッセージを入力してください"
             disabled={isLoading || !sessionId}
             className="input-field"
           />
-          <button
-            onClick={handleSend}
-            disabled={isLoading || !input.trim() || !sessionId}
-            className="send-button"
-          >
-            送信
-          </button>
+          {isLoading ? (
+            <button
+              onClick={handleStop}
+              className="stop-button"
+            >
+              停止
+            </button>
+          ) : (
+            <button
+              onClick={handleSend}
+              disabled={!input.trim() || !sessionId}
+              className="send-button"
+            >
+              送信
+            </button>
+          )}
         </div>
       </div>
     </div>

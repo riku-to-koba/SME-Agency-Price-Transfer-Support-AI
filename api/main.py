@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse, FileResponse
 from pydantic import BaseModel
 import sys
 from pathlib import Path
+from datetime import datetime
 
 # プロジェクトルートをパスに追加
 project_root = Path(__file__).parent.parent
@@ -58,6 +59,9 @@ class SessionResponse(BaseModel):
 def get_or_create_session(session_id: Optional[str] = None, user_info: Optional[dict] = None) -> str:
     """セッションを取得または作成"""
     if session_id and session_id in sessions:
+        # 既存セッションの場合、created_atがなければ設定
+        if "created_at" not in sessions[session_id]:
+            sessions[session_id]["created_at"] = datetime.now().timestamp()
         return session_id
     
     new_session_id = str(uuid.uuid4())[:8]
@@ -80,7 +84,8 @@ def get_or_create_session(session_id: Optional[str] = None, user_info: Optional[
         "messages": [],
         "agent": PriceTransferAgent(user_info=user_info_dict),
         "current_step": None,
-        "user_info": user_info_dict
+        "user_info": user_info_dict,
+        "created_at": datetime.now().timestamp()  # セッション作成時刻を記録
     }
     print(f"[DEBUG] セッション作成: session_id={new_session_id}, user_info={user_info_dict}")
     return new_session_id
@@ -144,6 +149,8 @@ async def clear_session(session_id: str):
     sessions[session_id]["messages"] = []
     sessions[session_id]["agent"] = PriceTransferAgent(user_info=user_info)
     sessions[session_id]["current_step"] = None
+    # セッション開始時刻をリセット（図もクリアされる）
+    sessions[session_id]["created_at"] = datetime.now().timestamp()
     
     return {"message": "Session cleared"}
 
@@ -155,6 +162,10 @@ async def chat_endpoint(request: ChatMessage):
     session_id = get_or_create_session(request.session_id)
     session = sessions[session_id]
     
+    # 既存セッションの場合、created_atがなければ設定（リロード時の対策）
+    if "created_at" not in session:
+        session["created_at"] = datetime.now().timestamp()
+    
     # ユーザーメッセージを履歴に追加
     user_message = {"role": "user", "content": request.message}
     session["messages"].append(user_message)
@@ -164,70 +175,104 @@ async def chat_endpoint(request: ChatMessage):
         full_response = ""
         has_content = False
         current_tool = None
+        is_cancelled = False
         
         try:
             agent = session["agent"]
             agent_stream = agent.stream_async(request.message)
             
             async for event in agent_stream:
-                if "data" in event:
-                    # テキストチャンク
-                    if not has_content:
-                        has_content = True
-                    
-                    full_response += event["data"]
-                    
-                    # [IMAGE_PATH:...] を除いたテキストを送信
-                    display_response = re.sub(r'\[IMAGE_PATH:[^\]]*\]', '', full_response).strip()
-                    
-                    yield f"data: {json.dumps({'type': 'content', 'data': display_response}, ensure_ascii=False)}\n\n"
-                
-                elif "current_tool_use" in event and event["current_tool_use"].get("name"):
-                    # ツール使用情報
-                    tool_name = event["current_tool_use"]["name"]
-                    if tool_name != current_tool:
-                        current_tool = tool_name
-                        tool_msg = f"\n\n*[{tool_name} を使用中]*\n\n"
-                        full_response += tool_msg
+                # クライアント切断をチェック（非同期ジェネレータの中断を検知）
+                try:
+                    if "data" in event:
+                        # テキストチャンク
+                        if not has_content:
+                            has_content = True
                         
-                        yield f"data: {json.dumps({'type': 'tool_use', 'tool': tool_name}, ensure_ascii=False)}\n\n"
-                
-                elif "tool_result" in event:
-                    # ツール結果を検知してステップ判定を処理
-                    tool_use = event.get("tool_use", {})
-                    if tool_use.get("name") == "detect_current_step":
-                        tool_result = event.get("tool_result", "")
+                        full_response += event["data"]
                         
-                        try:
-                            result_data = json.loads(tool_result)
-                            detected_step = result_data.get("step")
-                            confidence = result_data.get("confidence", "不明")
-                            reasoning = result_data.get("reasoning", "理由なし")
+                        # [IMAGE_PATH:...] を除いたテキストを送信
+                        display_response = re.sub(r'\[IMAGE_PATH:[^\]]*\]', '', full_response).strip()
+                        
+                        yield f"data: {json.dumps({'type': 'content', 'data': display_response}, ensure_ascii=False)}\n\n"
+                    
+                    elif "current_tool_use" in event and event["current_tool_use"].get("name"):
+                        # ツール使用情報（ログのみ、ユーザーには送信しない）
+                        tool_name = event["current_tool_use"]["name"]
+                        if tool_name != current_tool:
+                            current_tool = tool_name
+                            print(f"[DEBUG] ツール使用中: {tool_name}")
+                            # ユーザーには送信しない（ログのみ）
+                    
+                    elif "tool_result" in event:
+                        # ツール結果を検知してステップ判定を処理
+                        tool_use = event.get("tool_use", {})
+                        if tool_use.get("name") == "detect_current_step":
+                            tool_result = event.get("tool_result", "")
                             
-                            # ステップが有効な場合のみ更新
-                            if detected_step and detected_step != "UNKNOWN":
-                                session["current_step"] = detected_step
-                                # エージェントを再初期化
-                                update_result = session["agent"].update_step(detected_step)
+                            try:
+                                result_data = json.loads(tool_result)
+                                detected_step = result_data.get("step")
+                                confidence = result_data.get("confidence", "不明")
+                                reasoning = result_data.get("reasoning", "理由なし")
                                 
-                                yield f"data: {json.dumps({'type': 'step_update', 'step': detected_step, 'confidence': confidence, 'reasoning': reasoning}, ensure_ascii=False)}\n\n"
-                        except (json.JSONDecodeError, AttributeError) as e:
-                            # JSONパースエラーは無視
-                            pass
+                                # ステップが有効な場合のみ更新
+                                if detected_step and detected_step != "UNKNOWN":
+                                    session["current_step"] = detected_step
+                                    # エージェントを再初期化
+                                    update_result = session["agent"].update_step(detected_step)
+                                    
+                                    yield f"data: {json.dumps({'type': 'step_update', 'step': detected_step, 'confidence': confidence, 'reasoning': reasoning}, ensure_ascii=False)}\n\n"
+                            except (json.JSONDecodeError, AttributeError) as e:
+                                # JSONパースエラーは無視
+                                pass
+                except (GeneratorExit, asyncio.CancelledError) as e:
+                    # クライアント切断を検知
+                    is_cancelled = True
+                    print(f"[DEBUG] クライアントが切断されました: {str(e)}")
+                    break
+                except Exception as e:
+                    # その他のエラーはログに記録して続行
+                    print(f"[DEBUG] ストリーミング中のエラー: {str(e)}")
+                    continue
             
-            # 最終応答を処理
-            display_response = re.sub(r'\[IMAGE_PATH:[^\]]*\]', '', full_response).strip()
-            display_response = re.sub(r'\[DIAGRAM_IMAGE\].+?\[/DIAGRAM_IMAGE\]', '', display_response).strip()
+            # クライアントが切断されていない場合のみ最終処理
+            if not is_cancelled:
+                # 最終応答を処理
+                display_response = re.sub(r'\[IMAGE_PATH:[^\]]*\]', '', full_response).strip()
+                display_response = re.sub(r'\[DIAGRAM_IMAGE\].+?\[/DIAGRAM_IMAGE\]', '', display_response).strip()
+                
+                # アシスタントメッセージを履歴に追加（空でない場合のみ）
+                if display_response:
+                    session["messages"].append({"role": "assistant", "content": display_response})
+                
+                # 完了イベント
+                yield f"data: {json.dumps({'type': 'done', 'content': display_response}, ensure_ascii=False)}\n\n"
+            else:
+                # 停止された場合、部分的な応答を履歴に追加（空でない場合のみ）
+                if full_response:
+                    display_response = re.sub(r'\[IMAGE_PATH:[^\]]*\]', '', full_response).strip()
+                    display_response = re.sub(r'\[DIAGRAM_IMAGE\].+?\[/DIAGRAM_IMAGE\]', '', display_response).strip()
+                    if display_response:
+                        session["messages"].append({"role": "assistant", "content": display_response})
             
-            # アシスタントメッセージを履歴に追加
-            session["messages"].append({"role": "assistant", "content": display_response})
-            
-            # 完了イベント
-            yield f"data: {json.dumps({'type': 'done', 'content': display_response}, ensure_ascii=False)}\n\n"
-            
+        except (GeneratorExit, asyncio.CancelledError) as e:
+            # クライアント切断を検知
+            print(f"[DEBUG] ストリーミングがキャンセルされました: {str(e)}")
+            # 部分的な応答を履歴に追加（空でない場合のみ）
+            if full_response:
+                display_response = re.sub(r'\[IMAGE_PATH:[^\]]*\]', '', full_response).strip()
+                display_response = re.sub(r'\[DIAGRAM_IMAGE\].+?\[/DIAGRAM_IMAGE\]', '', display_response).strip()
+                if display_response:
+                    session["messages"].append({"role": "assistant", "content": display_response})
         except Exception as e:
             error_msg = f"エラーが発生しました: {str(e)}"
-            yield f"data: {json.dumps({'type': 'error', 'error': error_msg}, ensure_ascii=False)}\n\n"
+            print(f"[DEBUG] ストリーミングエラー: {error_msg}")
+            try:
+                yield f"data: {json.dumps({'type': 'error', 'error': error_msg}, ensure_ascii=False)}\n\n"
+            except:
+                # クライアントが既に切断されている場合は無視
+                pass
     
     return StreamingResponse(
         stream_response(),
@@ -241,20 +286,41 @@ async def chat_endpoint(request: ChatMessage):
 
 
 @app.get("/api/diagrams/latest")
-async def get_latest_diagram():
-    """最新の図の情報を取得"""
+async def get_latest_diagram(session_id: Optional[str] = None):
+    """最新の図の情報を取得（セッションに紐づく）"""
     diagrams_dir = os.path.join(os.getcwd(), "diagrams")
     if not os.path.exists(diagrams_dir):
         return {"diagram": None}
     
-    diagram_files = sorted(
-        [f for f in os.listdir(diagrams_dir) if f.endswith('.png')],
-        key=lambda x: os.path.getmtime(os.path.join(diagrams_dir, x)),
-        reverse=True
-    )
+    # セッションIDが必須（セッションIDがない場合は図を返さない）
+    if not session_id or session_id not in sessions:
+        return {"diagram": None}
     
-    if diagram_files:
-        filename = diagram_files[0]
+    # セッション開始時刻を取得
+    session_start_time = sessions[session_id].get("created_at")
+    
+    # created_atが設定されていない場合は、現在時刻を設定（既存セッション対策）
+    if not session_start_time:
+        session_start_time = datetime.now().timestamp()
+        sessions[session_id]["created_at"] = session_start_time
+    
+    # すべての図ファイルを取得
+    all_diagram_files = [
+        f for f in os.listdir(diagrams_dir) if f.endswith('.png')
+    ]
+    
+    # セッション開始時刻以降に作成された図のみをフィルタリング
+    filtered_files = []
+    for filename in all_diagram_files:
+        filepath = os.path.join(diagrams_dir, filename)
+        file_mtime = os.path.getmtime(filepath)
+        if file_mtime >= session_start_time:
+            filtered_files.append((filename, file_mtime))
+    
+    if filtered_files:
+        # 最新の図を取得
+        filtered_files.sort(key=lambda x: x[1], reverse=True)
+        filename = filtered_files[0][0]
         return {
             "diagram": {
                 "filename": filename,
