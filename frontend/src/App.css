@@ -132,6 +132,34 @@
   border: none;
 }
 
+.message-content table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  font-size: 0.9rem;
+}
+
+.message-content table th,
+.message-content table td {
+  padding: 0.75rem;
+  text-align: left;
+  border: 1px solid #e0e0e0;
+}
+
+.message-content table th {
+  background-color: #f5f5f5;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.message-content table tr:nth-child(even) {
+  background-color: #fafafa;
+}
+
+.message-content table tr:hover {
+  background-color: #f0f0f0;
+}
+
 .message.user .message-content {
   background-color: #5a5a5a;
   color: #ffffff;
@@ -506,6 +534,24 @@
   .message-content pre {
     background-color: #2a2a2a;
     border-color: #3a3a3a;
+  }
+
+  .message-content table th,
+  .message-content table td {
+    border-color: #3a3a3a;
+  }
+
+  .message-content table th {
+    background-color: #2a2a2a;
+    color: #e5e5e5;
+  }
+
+  .message-content table tr:nth-child(even) {
+    background-color: #1f1f1f;
+  }
+
+  .message-content table tr:hover {
+    background-color: #2a2a2a;
   }
 
   .cursor {

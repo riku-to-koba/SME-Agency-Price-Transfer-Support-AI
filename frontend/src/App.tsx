@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from 'react'
 import axios from 'axios'
 import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import './App.css'
 
 // Viteのプロキシ設定により、相対パスでアクセス
@@ -766,7 +767,7 @@ ${diagramData}
               <div key={idx}>
                 <div className={`message ${msg.role}`}>
                   <div className="message-content">
-                    <ReactMarkdown>{msg.content}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
                     {isAssistantLoading && currentStatus && (
                       <div className="status-message">
                         {currentStatus}
@@ -816,7 +817,7 @@ ${diagramData}
           {isLoading && messages.length > 0 && messages[messages.length - 1].role !== 'assistant' && (
             <div className="message assistant">
               <div className="message-content">
-                <ReactMarkdown>{currentResponseRef.current || ''}</ReactMarkdown>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{currentResponseRef.current || ''}</ReactMarkdown>
                 {currentStatus && (
                   <div className="status-message">
                     {currentStatus}
