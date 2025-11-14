@@ -14,7 +14,7 @@ try {
     }
 } catch {
     Write-Host "FastAPIが見つかりません。インストール中..." -ForegroundColor Yellow
-    pip install -r api/requirements.txt
+    pip install -r requirements.txt
 }
 
 # フロントエンドの依存パッケージを確認

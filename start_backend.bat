@@ -11,7 +11,6 @@ if exist venv\Scripts\activate.bat (
     call venv\Scripts\activate.bat
     echo Installing dependencies...
     pip install -r requirements.txt
-    pip install -r api/requirements.txt
 )
 
 echo.

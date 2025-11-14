@@ -10,7 +10,7 @@ echo [1/3] バックエンドの依存パッケージを確認中...
 python -c "import fastapi" 2>nul
 if errorlevel 1 (
     echo FastAPIが見つかりません。インストール中...
-    pip install -r api/requirements.txt
+    pip install -r requirements.txt
 )
 
 REM フロントエンドの依存パッケージを確認

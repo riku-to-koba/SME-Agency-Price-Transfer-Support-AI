@@ -12,7 +12,6 @@ else
     source venv/bin/activate
     echo "Installing dependencies..."
     pip install -r requirements.txt
-    pip install -r api/requirements.txt
 fi
 
 echo ""
