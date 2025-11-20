@@ -25,8 +25,11 @@ def is_trusted_source_ai(url: str, title: str, content: str) -> dict:
     try:
         print(f"\n🔍 [AI信頼性判定] URL: {url}")
 
+        # AWSプロファイルを使用してセッションを作成
+        session = boto3.Session(profile_name='bedrock_use_only')
+
         # LLMを使って信頼性を判定
-        bedrock_runtime = boto3.client(
+        bedrock_runtime = session.client(
             service_name='bedrock-runtime',
             region_name='ap-northeast-1'
         )

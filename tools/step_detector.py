@@ -57,8 +57,11 @@ def detect_current_step(user_question: str, conversation_context: str = "") -> s
 
     try:
         print("🔧 [STEP 1] Bedrockクライアントを初期化中...")
+        # AWSプロファイルを使用してセッションを作成
+        session = boto3.Session(profile_name='bedrock_use_only')
+
         # LLMを使ってステップを判定
-        bedrock_runtime = boto3.client(
+        bedrock_runtime = session.client(
             service_name='bedrock-runtime',
             region_name='ap-northeast-1'
         )

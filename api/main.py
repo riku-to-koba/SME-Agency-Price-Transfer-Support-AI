@@ -506,14 +506,14 @@ async def cost_analysis_endpoint(request: CostAnalysisRequest):
 if __name__ == "__main__":
     import sys
     import uvicorn
-    
+
     # バッファリングを無効化（ログが即座に表示されるように）
     sys.stdout.reconfigure(line_buffering=True)
     sys.stderr.reconfigure(line_buffering=True)
-    
+
     print("=" * 80, flush=True)
     print("[DEBUG] FastAPIサーバーを起動します", flush=True)
-    print("[DEBUG] ポート: 8000", flush=True)
+    print("[DEBUG] ポート: 8765", flush=True)
     print("=" * 80, flush=True)
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8765)
 

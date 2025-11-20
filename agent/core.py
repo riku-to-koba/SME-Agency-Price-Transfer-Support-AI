@@ -43,12 +43,20 @@ class PriceTransferAgent:
         Returns:
             BedrockModel: 初期化されたモデル
         """
+        import boto3
+
+        # AWSプロファイルを使用してセッションを作成（リージョンも指定）
+        session = boto3.Session(
+            profile_name='bedrock_use_only',
+            region_name='ap-northeast-1'
+        )
+
         default_config = {
             "model_id": "jp.anthropic.claude-haiku-4-5-20251001-v1:0",
-            "region_name": "ap-northeast-1",
             "temperature": 0.7,
             "max_tokens": 50000,
             "streaming": True,
+            "boto_session": session,
         }
 
         if config:

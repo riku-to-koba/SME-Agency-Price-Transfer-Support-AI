@@ -19,11 +19,14 @@ def search_knowledge_base(query: str, max_results: int = 5) -> str:
     """
     try:
         print(f"Start search in Knowledge Base for query: {query}")
-        knowledge_base_id = '7SM8UQNQFL'
+        knowledge_base_id = 'SIILIHIPRU'
         region = 'ap-northeast-1'
 
+        # AWSプロファイルを使用してセッションを作成
+        session = boto3.Session(profile_name='bedrock_use_only')
+
         # bedrock-agent-runtimeクライアントを使用
-        bedrock_agent_client = boto3.client(
+        bedrock_agent_client = session.client(
             service_name='bedrock-agent-runtime',
             region_name=region
         )
@@ -132,6 +135,13 @@ def search_knowledge_base(query: str, max_results: int = 5) -> str:
             if result['source']['uri']:
                 formatted_text += f"URI: {result['source']['uri']}\n"
             formatted_text += "\n"
+
+        # 検索結果をログに出力
+        print("\n" + "="*80)
+        print("📚 [Knowledge Base検索結果ログ]")
+        print("="*80)
+        print(formatted_text)
+        print("="*80 + "\n")
 
         return formatted_text
 

@@ -25,25 +25,9 @@ cd ..
 echo [3/3] サーバーを起動中...
 echo.
 
-REM ポート8000を使用しているプロセスを終了
-echo ポート8000を使用している既存のプロセスを確認中...
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr :8000 ^| findstr LISTENING') do (
-    echo プロセスID %%a を終了します...
-    taskkill /F /PID %%a >nul 2>&1
-)
-
-REM ポート5173を使用しているプロセスを終了
-echo ポート5173を使用している既存のプロセスを確認中...
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr :5173 ^| findstr LISTENING') do (
-    echo プロセスID %%a を終了します...
-    taskkill /F /PID %%a >nul 2>&1
-)
-
-timeout /t 1 /nobreak >nul
-
 echo.
 echo ========================================
-echo バックエンド: http://localhost:8000
+echo バックエンド: http://localhost:8765
 echo フロントエンド: http://localhost:5173
 echo ========================================
 echo.
