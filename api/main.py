@@ -19,7 +19,6 @@ project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 
 from agent.orchestrator import OrchestratorAgent  # noqa: E402
-from tools.cost_analysis import calculate_cost_impact  # noqa: E402
 
 app = FastAPI(title="Price Transfer Assistant API")
 
@@ -259,16 +258,69 @@ async def get_diagram(filename: str):
 
 @app.post("/api/cost-analysis", response_model=CostAnalysisResponse)
 async def cost_analysis_endpoint(request: CostAnalysisRequest):
-    """Cost impact helper used by STEP_0_CHECK_9 (simple wrapper)."""
+    """Cost impact helper - calculates cost changes."""
     try:
-        result = calculate_cost_impact(
-            before_sales=request.before_sales,
-            before_cost=request.before_cost,
-            before_expenses=request.before_expenses,
-            current_sales=request.current_sales,
-            current_cost=request.current_cost,
-            current_expenses=request.current_expenses,
-        )
+        # コスト高騰前の計算
+        before_total_cost = request.before_cost + request.before_expenses
+        before_profit = request.before_sales - before_total_cost
+        before_profit_rate = (before_profit / request.before_sales * 100) if request.before_sales > 0 else 0
+        
+        # 現在の計算
+        current_total_cost = request.current_cost + request.current_expenses
+        current_profit = request.current_sales - current_total_cost
+        current_profit_rate = (current_profit / request.current_sales * 100) if request.current_sales > 0 else 0
+        
+        # 増減率の計算
+        sales_change_rate = ((request.current_sales - request.before_sales) / request.before_sales * 100) if request.before_sales > 0 else 0
+        cost_change_rate = ((request.current_cost - request.before_cost) / request.before_cost * 100) if request.before_cost > 0 else 0
+        expenses_change_rate = ((request.current_expenses - request.before_expenses) / request.before_expenses * 100) if request.before_expenses > 0 else 0
+        total_cost_change_rate = ((current_total_cost - before_total_cost) / before_total_cost * 100) if before_total_cost > 0 else 0
+        profit_change_rate = ((current_profit - before_profit) / abs(before_profit) * 100) if before_profit != 0 else 0
+        
+        # 増減額の計算
+        sales_change = request.current_sales - request.before_sales
+        cost_change = request.current_cost - request.before_cost
+        expenses_change = request.current_expenses - request.before_expenses
+        total_cost_change = current_total_cost - before_total_cost
+        profit_change = current_profit - before_profit
+        
+        # 参考価格の算出
+        if before_profit_rate < 100 and before_profit_rate > 0:
+            reference_price = current_total_cost / (1 - before_profit_rate / 100)
+        else:
+            reference_price = current_total_cost * 1.1
+        
+        price_gap = reference_price - request.current_sales
+        price_gap_rate = (price_gap / request.current_sales * 100) if request.current_sales > 0 else 0
+        
+        result = {
+            "before": {
+                "sales": request.before_sales,
+                "cost": request.before_cost,
+                "expenses": request.before_expenses,
+                "total_cost": before_total_cost,
+                "profit": before_profit,
+                "profit_rate": before_profit_rate
+            },
+            "current": {
+                "sales": request.current_sales,
+                "cost": request.current_cost,
+                "expenses": request.current_expenses,
+                "total_cost": current_total_cost,
+                "profit": current_profit,
+                "profit_rate": current_profit_rate
+            },
+            "changes": {
+                "sales": {"amount": sales_change, "rate": sales_change_rate},
+                "cost": {"amount": cost_change, "rate": cost_change_rate},
+                "expenses": {"amount": expenses_change, "rate": expenses_change_rate},
+                "total_cost": {"amount": total_cost_change, "rate": total_cost_change_rate},
+                "profit": {"amount": profit_change, "rate": profit_change_rate}
+            },
+            "reference_price": reference_price,
+            "price_gap": price_gap,
+            "price_gap_rate": price_gap_rate
+        }
 
         return CostAnalysisResponse(success=True, result=result, message="calculation succeeded")
 

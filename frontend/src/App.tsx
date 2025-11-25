@@ -13,11 +13,12 @@ interface Message {
 }
 
 interface ChatEvent {
-  type: 'content' | 'tool_use' | 'step_update' | 'done' | 'error' | 'status'
+  type: 'content' | 'tool_use' | 'step_update' | 'mode_update' | 'done' | 'error' | 'status'
   data?: string
   tool?: string
   show_modal?: boolean
   step?: string
+  mode?: string
   confidence?: string
   reasoning?: string
   content?: string
@@ -44,32 +45,13 @@ interface CostAnalysisData {
   current_expenses: string
 }
 
-// ステップ名をユーザー向けに変換
-function formatStepName(step: string): string {
-  const stepMap: { [key: string]: string } = {
-    'STEP_0_CHECK_1': '価格交渉準備編 - 取引条件・業務内容の確認',
-    'STEP_0_CHECK_2': '価格交渉準備編 - 原材料費・労務費データの定期収集',
-    'STEP_0_CHECK_3': '価格交渉準備編 - 原価計算の実施',
-    'STEP_0_CHECK_4': '価格交渉準備編 - 単価表の作成',
-    'STEP_0_CHECK_5': '価格交渉準備編 - 見積書フォーマットの整備',
-    'STEP_0_CHECK_6': '価格交渉準備編 - 取引先の経営方針・業績把握',
-    'STEP_0_CHECK_7': '価格交渉準備編 - 自社の付加価値の明確化',
-    'STEP_0_CHECK_8': '価格交渉準備編 - 適正な取引慣行の確認',
-    'STEP_0_CHECK_9': '価格交渉準備編 - 価格転嫁の必要性判定',
-    'STEP_1': '価格交渉実践編 - 業界動向の情報収集',
-    'STEP_2': '価格交渉実践編 - 取引先情報収集と交渉方針検討',
-    'STEP_3': '価格交渉実践編 - 書面での申し入れ',
-    'STEP_4': '価格交渉実践編 - 説明資料の準備',
-    'STEP_5': '価格交渉実践編 - 発注後に発生する価格交渉',
-  }
-  return stepMap[step] || step
-}
 
 function App() {
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [sessionId, setSessionId] = useState<string | null>(null)
+  const [currentMode, setCurrentMode] = useState<string | null>(null)
   const [currentStep, setCurrentStep] = useState<string | null>(null)
   const [latestDiagram, setLatestDiagram] = useState<string | null>(null)
   const [diagramMessageIndex, setDiagramMessageIndex] = useState<number | null>(null) // 図が紐づくメッセージのインデックス
@@ -337,6 +319,10 @@ function App() {
                   } else {
                     setCurrentStatus(event.message || '')
                   }
+                } else if (event.type === 'mode_update') {
+                  // モード更新
+                  setCurrentMode(event.mode || null)
+                  console.log(`[モード更新] ${event.mode}`)
                 } else if (event.type === 'tool_use') {
                   // ツール使用中
                   console.log(`[ツール使用中] ${event.tool}`)
@@ -346,26 +332,8 @@ function App() {
                     setShowCostAnalysisModal(true)
                   }
                 } else if (event.type === 'step_update') {
+                  // ステップ更新（後方互換性のため維持）
                   setCurrentStep(event.step || null)
-                  // ステップ更新通知をメッセージに追加（ユーザー向けに分かりやすく）
-                  const formattedStep = formatStepName(event.step || '')
-                  const stepMessage = `\n\n**📌 現在のステップ: ${formattedStep}**\n\n`
-                  currentResponseRef.current += stepMessage
-                  
-                  // アシスタントメッセージがまだ追加されていない場合は追加
-                  if (!hasAddedAssistantMessage) {
-                    hasAddedAssistantMessage = true
-                    setMessages(prev => [...prev, { role: 'assistant', content: currentResponseRef.current }])
-                  } else {
-                    setMessages(prev => {
-                      const newMessages = [...prev]
-                      newMessages[newMessages.length - 1] = {
-                        role: 'assistant',
-                        content: currentResponseRef.current,
-                      }
-                      return newMessages
-                    })
-                  }
                 } else if (event.type === 'done') {
                   // ステータスをクリア
                   setCurrentStatus('')
@@ -755,17 +723,18 @@ ${diagramData}
       )}
 
       <header className="app-header">
-        <h1>価格転嫁支援AIアシスタント</h1>
-        <button onClick={handleClear} className="clear-button">
-          履歴クリア
-        </button>
-      </header>
-
-      {currentStep && (
-        <div className="step-indicator">
-          📌 現在のステップ: <strong>{formatStepName(currentStep)}</strong>
+        <h1>中小企業サポートAI</h1>
+        <div className="header-controls">
+          {currentMode && (
+            <div className={`mode-badge ${currentMode}`}>
+              {currentMode === 'mode1' ? '💼 よろず相談' : '💰 価格転嫁専門'}
+            </div>
+          )}
+          <button onClick={handleClear} className="clear-button">
+            履歴クリア
+          </button>
         </div>
-      )}
+      </header>
 
       <div className="chat-container">
         <div className="messages">
@@ -792,31 +761,6 @@ ${diagramData}
                     )}
                   </div>
                 </div>
-                {/* アシスタントメッセージの下に価格転嫁検討ツールのボタンを表示（STEP_0_CHECK_9の場合） */}
-                {msg.role === 'assistant' && !isAssistantLoading && currentStep === 'STEP_0_CHECK_9' && idx === messages.length - 1 && (
-                  <div style={{ marginTop: '0.5rem', marginBottom: '1rem', paddingLeft: '1rem' }}>
-                    <button
-                      onClick={() => setShowCostAnalysisModal(true)}
-                      className="cost-analysis-button"
-                      style={{
-                        padding: '0.75rem 1.5rem',
-                        backgroundColor: '#2a2a2a',
-                        color: '#ffffff',
-                        border: 'none',
-                        borderRadius: '8px',
-                        cursor: 'pointer',
-                        fontSize: '0.9375rem',
-                        fontWeight: '500',
-                        boxShadow: '0 2px 4px rgba(0,0,0,0.1)',
-                        transition: 'background-color 0.2s'
-                      }}
-                      onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#3a3a3a'}
-                      onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#2a2a2a'}
-                    >
-                      📊 価格転嫁検討ツールで分析する
-                    </button>
-                  </div>
-                )}
                 {/* 図が紐づいているメッセージの直後に図を表示 */}
                 {hasDiagram && (
                   <div className="diagram-container">

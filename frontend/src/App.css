@@ -25,6 +25,34 @@
   letter-spacing: -0.015em;
 }
 
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.mode-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 0.5rem 1rem;
+  border-radius: 20px;
+  font-size: 0.875rem;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.mode-badge.mode1 {
+  background-color: #e8f4fd;
+  color: #1976d2;
+  border: 1px solid #bbdefb;
+}
+
+.mode-badge.mode2 {
+  background-color: #fff3e0;
+  color: #e65100;
+  border: 1px solid #ffe0b2;
+}
+
 .clear-button {
   padding: 0.625rem 1.25rem;
   background-color: transparent;
@@ -487,6 +515,18 @@
 
   .app-header h1 {
     color: #ffffff;
+  }
+
+  .mode-badge.mode1 {
+    background-color: #1e3a5f;
+    color: #90caf9;
+    border-color: #1976d2;
+  }
+
+  .mode-badge.mode2 {
+    background-color: #4a2c00;
+    color: #ffb74d;
+    border-color: #e65100;
   }
 
   .clear-button {
