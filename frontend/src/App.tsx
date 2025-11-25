@@ -10,10 +10,11 @@ const API_BASE_URL = ''
 interface Message {
   role: 'user' | 'assistant'
   content: string
+  images?: string[]  // Base64画像データの配列
 }
 
 interface ChatEvent {
-  type: 'content' | 'tool_use' | 'step_update' | 'mode_update' | 'done' | 'error' | 'status'
+  type: 'content' | 'tool_use' | 'step_update' | 'mode_update' | 'done' | 'error' | 'status' | 'image'
   data?: string
   tool?: string
   show_modal?: boolean
@@ -53,8 +54,6 @@ function App() {
   const [sessionId, setSessionId] = useState<string | null>(null)
   const [currentMode, setCurrentMode] = useState<string | null>(null)
   const [currentStep, setCurrentStep] = useState<string | null>(null)
-  const [latestDiagram, setLatestDiagram] = useState<string | null>(null)
-  const [diagramMessageIndex, setDiagramMessageIndex] = useState<number | null>(null) // 図が紐づくメッセージのインデックス
   const [showUserInfoModal, setShowUserInfoModal] = useState(true)
   const [userInfo, setUserInfo] = useState<UserInfo>({})
   const [showCostAnalysisModal, setShowCostAnalysisModal] = useState(false)
@@ -70,18 +69,13 @@ function App() {
   const [currentStatus, setCurrentStatus] = useState<string>('') // 現在のステータスメッセージ
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const currentResponseRef = useRef<string>('')
+  const currentImagesRef = useRef<string[]>([])  // 現在のメッセージに紐づく画像
   const abortControllerRef = useRef<AbortController | null>(null)
-  const previousDiagramUrlRef = useRef<string | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
   // セッション初期化（ユーザー情報入力後）
   const initSession = async (userInfo: UserInfo) => {
     try {
-      // 図をクリア
-      setLatestDiagram(null)
-      setDiagramMessageIndex(null)
-      previousDiagramUrlRef.current = null
-      
       const response = await axios.post(`${API_BASE_URL}/api/session`, { user_info: userInfo })
       setSessionId(response.data.session_id)
       
@@ -134,68 +128,6 @@ function App() {
     initSession(userInfo)
   }
 
-  // 最新の図を取得（セッションに紐づく）
-  useEffect(() => {
-    if (!sessionId) {
-      setLatestDiagram(null)
-      setDiagramMessageIndex(null)
-      previousDiagramUrlRef.current = null
-      return
-    }
-
-    const fetchLatestDiagram = async () => {
-      try {
-        const response = await axios.get(`${API_BASE_URL}/api/diagrams/latest`, {
-          params: { session_id: sessionId }
-        })
-        if (response.data.diagram) {
-          // URLを直接使用
-          const newDiagramUrl = response.data.diagram.url
-          
-          // 図が新しく生成された場合（URLが変わった場合）
-          if (newDiagramUrl !== previousDiagramUrlRef.current) {
-            previousDiagramUrlRef.current = newDiagramUrl
-            // diagramMessageIndexは別のuseEffectで更新
-          }
-          
-          setLatestDiagram(newDiagramUrl)
-        } else {
-          setLatestDiagram(null)
-          setDiagramMessageIndex(null)
-          previousDiagramUrlRef.current = null
-        }
-      } catch (error) {
-        console.error('図の取得エラー:', error)
-      }
-    }
-    
-    fetchLatestDiagram() // 初回取得
-    const interval = setInterval(fetchLatestDiagram, 2000) // 2秒ごとにチェック
-    return () => clearInterval(interval)
-  }, [sessionId])
-  
-  // 図が新しく生成されたとき、またはメッセージが更新されたときに、図が紐づくメッセージインデックスを更新
-  useEffect(() => {
-    // 図が存在し、メッセージがある場合
-    if (latestDiagram && messages.length > 0) {
-      // 図が新しく生成された場合（previousDiagramUrlRefと異なる場合）、インデックスを更新
-      const isNewDiagram = latestDiagram !== previousDiagramUrlRef.current
-      
-      if (isNewDiagram || diagramMessageIndex === null) {
-        // 最後のアシスタントメッセージのインデックスを探す
-        for (let i = messages.length - 1; i >= 0; i--) {
-          if (messages[i].role === 'assistant') {
-            setDiagramMessageIndex(i)
-            break
-          }
-        }
-      }
-    } else if (!latestDiagram) {
-      // 図がなくなった場合はインデックスもクリア
-      setDiagramMessageIndex(null)
-    }
-  }, [messages, latestDiagram, diagramMessageIndex])
-
   // メッセージが更新されたらスクロール
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -223,6 +155,7 @@ function App() {
             newMessages[newMessages.length - 1] = {
               role: 'assistant',
               content: currentResponseRef.current + '\n\n*[応答が停止されました]*',
+              images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
             }
           }
           return newMessages
@@ -250,6 +183,7 @@ function App() {
     }
     setIsLoading(true)
     currentResponseRef.current = ''
+    currentImagesRef.current = []  // 画像リストをリセット
 
     // AbortControllerを作成
     abortControllerRef.current = new AbortController()
@@ -300,7 +234,11 @@ function App() {
                   // 最初のcontentイベントでアシスタントメッセージを追加
                   if (!hasAddedAssistantMessage) {
                     hasAddedAssistantMessage = true
-                    setMessages(prev => [...prev, { role: 'assistant', content: currentResponseRef.current }])
+                    setMessages(prev => [...prev, { 
+                      role: 'assistant', 
+                      content: currentResponseRef.current,
+                      images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
+                    }])
                   } else {
                     // 既存のメッセージを更新
                     setMessages(prev => {
@@ -308,9 +246,28 @@ function App() {
                       newMessages[newMessages.length - 1] = {
                         role: 'assistant',
                         content: currentResponseRef.current,
+                        images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
                       }
                       return newMessages
                     })
+                  }
+                } else if (event.type === 'image') {
+                  // 画像データを受信
+                  if (event.data) {
+                    currentImagesRef.current.push(event.data)
+                    
+                    // メッセージを更新して画像を追加
+                    if (hasAddedAssistantMessage) {
+                      setMessages(prev => {
+                        const newMessages = [...prev]
+                        newMessages[newMessages.length - 1] = {
+                          role: 'assistant',
+                          content: currentResponseRef.current,
+                          images: [...currentImagesRef.current],
+                        }
+                        return newMessages
+                      })
+                    }
                   }
                 } else if (event.type === 'status') {
                   // ステータス更新（思考中、検索中など）
@@ -341,13 +298,18 @@ function App() {
                   // アシスタントメッセージがまだ追加されていない場合は追加
                   if (!hasAddedAssistantMessage) {
                     hasAddedAssistantMessage = true
-                    setMessages(prev => [...prev, { role: 'assistant', content: event.content || currentResponseRef.current }])
+                    setMessages(prev => [...prev, { 
+                      role: 'assistant', 
+                      content: event.content || currentResponseRef.current,
+                      images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
+                    }])
                   } else {
                     setMessages(prev => {
                       const newMessages = [...prev]
                       newMessages[newMessages.length - 1] = {
                         role: 'assistant',
                         content: event.content || currentResponseRef.current,
+                        images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
                       }
                       return newMessages
                     })
@@ -500,7 +462,7 @@ function App() {
         }, null, 2)
         
         // エージェントに要約と図示を依頼（内部処理として、画面には表示しない）
-        const agentRequest = `価格転嫁検討ツールで分析しました。以下の分析結果を要約して、分かりやすく説明してください。また、このデータを使って generate_diagram ツールで棒グラフも生成してください。
+        const agentRequest = `価格転嫁検討ツールで分析しました。以下の分析結果を要約して、分かりやすく説明してください。また、このデータを使って generate_chart ツールで棒グラフも生成してください。
 
 ${analysisResultText}
 
@@ -528,11 +490,6 @@ ${diagramData}
     if (!sessionId) return
 
     try {
-      // 図を先にクリア
-      setLatestDiagram(null)
-      setDiagramMessageIndex(null)
-      previousDiagramUrlRef.current = null
-      
       await axios.post(`${API_BASE_URL}/api/session/${sessionId}/clear`)
       setMessages([])
       setCurrentStep(null)
@@ -742,8 +699,6 @@ ${diagramData}
             // 最後のメッセージがアシスタントで、かつローディング中の場合、カーソルを表示
             const isLastMessage = idx === messages.length - 1
             const isAssistantLoading = isLastMessage && msg.role === 'assistant' && isLoading
-            // このメッセージに図が紐づいているかどうか
-            const hasDiagram = msg.role === 'assistant' && diagramMessageIndex === idx && latestDiagram
             
             return (
               <div key={idx}>
@@ -759,15 +714,22 @@ ${diagramData}
                     {isAssistantLoading && !currentStatus && currentResponseRef.current.trim() && (
                       <span className="cursor">▌</span>
                     )}
+                    {/* このメッセージに紐づく画像を表示 */}
+                    {msg.images && msg.images.length > 0 && (
+                      <div className="message-images">
+                        {msg.images.map((imgData, imgIdx) => (
+                          <div key={imgIdx} className="chart-image-container">
+                            <img 
+                              src={`data:image/png;base64,${imgData}`} 
+                              alt={`生成されたグラフ ${imgIdx + 1}`} 
+                              className="chart-image"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
-                {/* 図が紐づいているメッセージの直後に図を表示 */}
-                {hasDiagram && (
-                  <div className="diagram-container">
-                    <h3>📊 生成された図</h3>
-                    <img src={`${API_BASE_URL}${latestDiagram}`} alt="生成された図" className="diagram-image" />
-                  </div>
-                )}
               </div>
             )
           })}
@@ -959,4 +921,3 @@ ${diagramData}
 }
 
 export default App
-

@@ -11,7 +11,7 @@ from typing import Dict, Optional
 import sys
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 # Make project root importable
@@ -107,6 +107,18 @@ def get_session_or_404(session_id: str) -> dict:
     return session
 
 
+def extract_chart_images(text: str) -> tuple[str, list[str]]:
+    """テキストからチャート画像のBase64データを抽出する。
+    
+    Returns:
+        (画像タグを除去したテキスト, Base64画像データのリスト)
+    """
+    pattern = r'\[CHART_IMAGE\](.*?)\[/CHART_IMAGE\]'
+    images = re.findall(pattern, text, re.DOTALL)
+    clean_text = re.sub(pattern, '', text, flags=re.DOTALL).strip()
+    return clean_text, images
+
+
 @app.get("/")
 async def root():
     """Health check."""
@@ -151,12 +163,21 @@ async def chat_endpoint(request: ChatMessage):
     async def stream_response():
         full_response = ""
         is_cancelled = False
+        sent_images = []  # 送信済み画像を追跡
 
         # initial thinking signal
         yield f"data: {json.dumps({'type': 'status', 'status': 'thinking', 'message': 'processing...'}, ensure_ascii=False)}\n\n"
 
         try:
             async for event in orchestrator.stream(session, request.message):
+                # 任意のイベントから画像を抽出
+                event_str = str(event)
+                _, event_images = extract_chart_images(event_str)
+                for img in event_images:
+                    if img not in sent_images:
+                        sent_images.append(img)
+                        yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
+                
                 # mode updates
                 if event.get("type") == "mode_update":
                     yield f"data: {json.dumps({'type': 'mode_update', 'mode': event['mode']}, ensure_ascii=False)}\n\n"
@@ -177,7 +198,18 @@ async def chat_endpoint(request: ChatMessage):
                 # content chunk
                 if "data" in event:
                     full_response += event["data"]
-                    display_response = re.sub(r'\[IMAGE_PATH:[^\]]*\]', '', full_response).strip()
+                    
+                    # 画像データを抽出
+                    clean_text, images = extract_chart_images(full_response)
+                    
+                    # 新しい画像があれば送信
+                    for img in images:
+                        if img not in sent_images:
+                            sent_images.append(img)
+                            yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
+                    
+                    # 古いパターンも除去
+                    display_response = re.sub(r'\[IMAGE_PATH:[^\]]*\]', '', clean_text).strip()
                     display_response = re.sub(r'\[DIAGRAM_IMAGE\].+?\[/DIAGRAM_IMAGE\]', '', display_response).strip()
                     yield f"data: {json.dumps({'type': 'content', 'data': display_response}, ensure_ascii=False)}\n\n"
                     continue
@@ -189,8 +221,18 @@ async def chat_endpoint(request: ChatMessage):
         finally:
             if not is_cancelled:
                 yield f"data: {json.dumps({'type': 'status', 'status': 'none', 'message': ''}, ensure_ascii=False)}\n\n"
-                display_response = re.sub(r'\[IMAGE_PATH:[^\]]*\]', '', full_response).strip()
+                
+                # 最終的なテキストから画像を除去
+                clean_text, images = extract_chart_images(full_response)
+                display_response = re.sub(r'\[IMAGE_PATH:[^\]]*\]', '', clean_text).strip()
                 display_response = re.sub(r'\[DIAGRAM_IMAGE\].+?\[/DIAGRAM_IMAGE\]', '', display_response).strip()
+                
+                # 残りの画像があれば送信
+                for img in images:
+                    if img not in sent_images:
+                        sent_images.append(img)
+                        yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
+                
                 if display_response:
                     orchestrator.append_assistant_message(session, display_response)
                 yield f"data: {json.dumps({'type': 'done', 'content': display_response}, ensure_ascii=False)}\n\n"
@@ -204,56 +246,6 @@ async def chat_endpoint(request: ChatMessage):
             "X-Accel-Buffering": "no",
         },
     )
-
-
-@app.get("/api/diagrams/latest")
-async def get_latest_diagram(session_id: Optional[str] = None):
-    """Get latest diagram file info for a session."""
-    diagrams_dir = os.path.join(os.getcwd(), "diagrams")
-    if not os.path.exists(diagrams_dir):
-        return {"diagram": None}
-
-    if not session_id:
-        return {"diagram": None}
-
-    session = orchestrator.get_session(session_id)
-    if session is None:
-        return {"diagram": None}
-
-    session_start_time = session.get("created_at") or datetime.now().timestamp()
-    session["created_at"] = session_start_time
-
-    all_diagram_files = [f for f in os.listdir(diagrams_dir) if f.endswith(".png")]
-    filtered_files = []
-    for filename in all_diagram_files:
-        filepath = os.path.join(diagrams_dir, filename)
-        file_mtime = os.path.getmtime(filepath)
-        if file_mtime >= session_start_time:
-            filtered_files.append((filename, file_mtime))
-
-    if filtered_files:
-        filtered_files.sort(key=lambda x: x[1], reverse=True)
-        filename = filtered_files[0][0]
-        return {
-            "diagram": {
-                "filename": filename,
-                "url": f"/api/diagrams/{filename}",
-            }
-        }
-
-    return {"diagram": None}
-
-
-@app.get("/api/diagrams/{filename}")
-async def get_diagram(filename: str):
-    """Return diagram image file."""
-    diagrams_dir = os.path.join(os.getcwd(), "diagrams")
-    filepath = os.path.join(diagrams_dir, filename)
-
-    if not os.path.exists(filepath) or not filename.endswith(".png"):
-        raise HTTPException(status_code=404, detail="Diagram not found")
-
-    return FileResponse(filepath, media_type="image/png")
 
 
 @app.post("/api/cost-analysis", response_model=CostAnalysisResponse)
