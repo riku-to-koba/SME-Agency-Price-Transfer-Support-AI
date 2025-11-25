@@ -1,702 +1,793 @@
-# システムアーキテクチャ図
+# アーキテクチャ設計書 (System Architecture)
 
-## 全体フロー
+## 🏗️ 1. システム概要
 
-```mermaid
-graph TB
-    User[ユーザー<br/>中小企業担当者] -->|質問入力| UI[React UI<br/>frontend/src/App.tsx]
-    UI -->|HTTP POST| API[FastAPI<br/>api/main.py]
+本システムは、**「3層エージェント・アーキテクチャ (3-Tier Agent Architecture)」**を採用する。
+1つの親エージェント(Orchestrator)と2つの子エージェント(Mode 1 / Mode 2)で構成され、ユーザーの課題深度に応じてシステムプロンプト、ツールセット、振る舞いを動的に切り替え、単なるチャットボットを超えた「実行支援ソフトウェア」としての挙動を実現する。
 
-    API -->|1. ステップ判定を自動実行| Detect[detect_current_step<br/>tools/step_detector.py]
-    Detect -->|判定結果| API
+### システム全体像
 
-    API -->|2. セッション状態更新| Update[current_step設定<br/>sessions管理]
-    Update -->|3. エージェント再初期化| Reload[PriceTransferAgent<br/>新しいプロンプトで]
-
-    Reload -->|4. 質問を送信| Agent[PriceTransferAgent<br/>agent/core.py]
-    Agent -->|プロンプト構成| Prompt[システムプロンプト<br/>基本+ユーザー情報+ステップ別]
-
-    Agent -->|5. ツール実行| Tools[ツール群]
-
-    Tools --> KB[search_knowledge_base<br/>ナレッジベース検索]
-    Tools --> Web[web_search<br/>AI信頼性判定付き]
-    Tools --> Calc[calculator<br/>計算]
-    Tools --> Diagram[generate_diagram<br/>図生成]
-    Tools --> Cost[analyze_cost_impact<br/>コスト分析]
-
-    KB --> Response[回答生成]
-    Web --> Response
-    Calc --> Response
-    Diagram --> Response
-    Cost --> Response
-
-    Response -->|SSEストリーミング| API
-    API -->|SSEストリーミング| UI
-    UI -->|表示| User
-
-    style User fill:#FFE4B5
-    style UI fill:#E0F7FA
-    style Agent fill:#C8E6C9
-    style Detect fill:#FFECB3
-    style Update fill:#FFECB3
-    style Reload fill:#FFECB3
-    style Tools fill:#B3E5FC
-    style Response fill:#C8E6C9
+```
+ユーザー（中小企業経営者）
+        ↓
+    チャットUI (React)
+        ↓
+    ┌─────────────────────────────────────┐
+    │  Orchestrator Agent（親エージェント）  │
+    │  - 全リクエストの入り口               │
+    │  - モード判定のみを担当               │
+    │  - ステートレス（状態を持たない）     │
+    │  - LLM: Claude 4.5 Haiku            │
+    └─────────────────────────────────────┘
+        ↓（毎回判定）
+    ┌─────────────────────────────────────┐
+    │  適切な子エージェントへ振り分け       │
+    └─────────────────────────────────────┘
+        ↓
+    ┌──────────────────┬──────────────────┐
+    │  Mode 1 Agent    │  Mode 2 Agent    │
+    │  よろず相談       │  価格転嫁専門     │
+    │                  │                  │
+    │  - Web検索標準   │  - ステップ判定   │
+    │  - 傾聴・相談    │  - 進捗管理       │
+    │  - ステートレス  │  - ステートフル   │
+    │  - Haiku        │  - Haiku         │
+    └──────────────────┴──────────────────┘
+        ↓
+    外部連携・データレイヤー
+    - Web Search API
+    - RAG Service (S3 + Vector Search)
+    - S3 Storage
+    - Session Management (In-Memory / DB)
 ```
 
-## ステップ判定と動的プロンプト切り替え（最新フロー）
+### アーキテクチャの特徴
 
-```mermaid
-sequenceDiagram
-    participant User as ユーザー
-    participant UI as React UI
-    participant API as FastAPI
-    participant Detector as ステップ判定
-    participant Agent as PriceTransferAgent
-    participant Prompt as システムプロンプト
-    participant Tools as ツール群
+1. **3層エージェント構造**: Orchestrator(親) → Mode 1/2 Agent(子)の明確な役割分担
+2. **毎回のモード判定**: 全てのリクエストがOrchestratorを経由し、リアルタイムでモード判定
+3. **ステートフルな進捗管理**: Mode 2 Agentは会話履歴と進捗状態を保持し、セッション継続を実現
+4. **ステップ自動判定**: Mode 2 Agentが会話内容から現在のステップ(CHECK 1-9 / STEP 1-5)を自動判定
+5. **ツール自動選択・実行**: 判定されたステップに応じて、最適な専門ツールを自動選択・起動
+6. **シームレスな実行**: ユーザーは対話を続けるだけで、裏側でツールが連携動作
 
-    User->>UI: 「原価計算のやり方を教えて」
-    UI->>API: POST /api/chat
-
-    Note over API,Detector: 【重要】質問の最初に自動実行
-    API->>Detector: detect_current_step<br/>(質問 + 会話文脈)
-    Detector->>Detector: Claude Haikuで判定
-    Detector-->>API: {"step": "STEP_0_CHECK_3",<br/>"confidence": "high",<br/>"reasoning": "原価計算について質問"}
-
-    API->>API: セッション状態更新<br/>current_step = "STEP_0_CHECK_3"
-    API->>UI: SSEイベント: step_update
-    UI->>User: ステップ表示更新<br/>「📌 価格交渉準備編 - 原価計算の実施」
-
-    API->>Agent: エージェント再初期化<br/>(current_step="STEP_0_CHECK_3")
-
-    Agent->>Prompt: プロンプト構成<br/>基本 + ユーザー情報 + CHECK 3用
-
-    Agent->>Agent: 質問を処理
-    Agent->>Tools: 推奨ツールを実行<br/>search_knowledge_base<br/>calculator<br/>generate_diagram
-
-    Tools-->>Agent: ツール結果
-
-    Agent->>API: CHECK 3に特化した<br/>詳しい回答
-    API->>UI: SSEストリーミング
-
-    UI->>User: 表示（リアルタイム更新）
-```
-
-## プロンプト構成（3つのプロンプトを動的に結合）
-
-```mermaid
-graph LR
-    Base[基本プロンプト<br/>MAIN_SYSTEM_PROMPT] --> Final[最終プロンプト]
-
-    UserInfo{ユーザー情報<br/>あり?} -->|Yes| UI[ユーザー情報プロンプト<br/>業種・規模・地域など]
-    UserInfo -->|No| Final
-    UI --> Final
-
-    Step{判定されたステップ} -->|STEP 0 - CHECK 1| C1[CHECK 1用<br/>取引条件確認]
-    Step -->|STEP 0 - CHECK 2| C2[CHECK 2用<br/>データ収集]
-    Step -->|STEP 0 - CHECK 3| C3[CHECK 3用<br/>原価計算]
-    Step -->|STEP 0 - CHECK 4| C4[CHECK 4用<br/>単価表作成]
-    Step -->|STEP 0 - CHECK 5| C5[CHECK 5用<br/>見積書整備]
-    Step -->|STEP 0 - CHECK 6| C6[CHECK 6用<br/>取引先把握]
-    Step -->|STEP 0 - CHECK 7| C7[CHECK 7用<br/>付加価値明確化]
-    Step -->|STEP 0 - CHECK 8| C8[CHECK 8用<br/>取引慣行確認]
-    Step -->|STEP 0 - CHECK 9| C9[CHECK 9用<br/>価格転嫁必要性判定]
-    Step -->|STEP 1| S1[STEP 1用<br/>業界動向]
-    Step -->|STEP 2-5| S2[STEP 2-5用<br/>実践編]
-    Step -->|None| Final
-
-    C1 --> Final
-    C2 --> Final
-    C3 --> Final
-    C4 --> Final
-    C5 --> Final
-    C6 --> Final
-    C7 --> Final
-    C8 --> Final
-    C9 --> Final
-    S1 --> Final
-    S2 --> Final
-
-    Final --> Agent[PriceTransferAgent]
-
-    style Base fill:#FFF9C4
-    style UI fill:#FFE4B5
-    style C3 fill:#FF6B6B
-    style C9 fill:#FF6B6B
-    style Final fill:#C8E6C9
-```
-
-## データフロー
-
-```mermaid
-graph TD
-    Session[FastAPI Sessions<br/>api/main.py] -->|保持| SID[session_id]
-    Session -->|保持| MSG[messages<br/>会話履歴]
-    Session -->|保持| AGT[agent<br/>エージェントインスタンス]
-    Session -->|保持| STEP[current_step<br/>判定されたステップ]
-    Session -->|保持| USER[user_info<br/>ユーザー企業情報]
-    Session -->|保持| TIME[created_at<br/>セッション作成時刻]
-
-    React[React State] -->|取得| API[GET /api/session/{id}/messages]
-    React -->|更新| API2[POST /api/chat]
-
-    STEP -->|例| E1["STEP_0_CHECK_3"]
-    STEP -->|例| E2["STEP_0_CHECK_9"]
-    STEP -->|例| E3["None (未判定)"]
-
-    STEP --> Update{ステップ更新?}
-    Update -->|Yes| Reinit[エージェント再初期化<br/>新しいプロンプトで]
-    Update -->|No| Keep[現状維持]
-
-    USER -->|例| U1["industry: 製造業<br/>products: 金属加工部品"]
-    USER --> Personalize[パーソナライズされた<br/>アドバイス]
-
-    style Session fill:#FFFDE7
-    style STEP fill:#FFECB3
-    style USER fill:#E1BEE7
-    style E1 fill:#FF6B6B
-    style E2 fill:#FF6B6B
-```
-
-## ファイル構成と責務
-
-```mermaid
-graph TB
-    subgraph UI層
-        FRONTEND[frontend/src/App.tsx<br/>React UI<br/>・チャット画面<br/>・SSEストリーミング表示<br/>・Markdownレンダリング<br/>・図の表示<br/>・ユーザー情報入力モーダル<br/>・価格転嫁検討ツールモーダル]
-    end
-
-    subgraph API層
-        API[api/main.py<br/>FastAPI<br/>・REST API<br/>・SSEストリーミング<br/>・セッション管理<br/>・質問の最初にステップ判定を自動実行]
-    end
-
-    subgraph エージェント層
-        CORE[agent/core.py<br/>PriceTransferAgent<br/>・初期化<br/>・ステップ更新<br/>・プロンプト構成<br/>・ユーザー情報プロンプト生成]
-        PROMPT[agent/prompts.py<br/>システムプロンプト<br/>・基本プロンプト<br/>・ステップ別追加プロンプト<br/>・全14ステップ対応]
-    end
-
-    subgraph ツール層
-        DETECTOR[tools/step_detector.py<br/>ステップ判定<br/>・LLMベース判定<br/>・Claude Haiku使用<br/>・会話文脈考慮<br/>・リトライロジック]
-        DIAGRAM[tools/diagram_generator.py<br/>図生成ツール<br/>・matplotlib実行<br/>・データ抽出<br/>・セッション紐付け]
-        WEB[tools/web_search.py<br/>Web検索<br/>・Tavily API<br/>・AI信頼性判定<br/>・リトライロジック]
-        KB[tools/knowledge_base.py<br/>Knowledge Base検索<br/>・セマンティック検索<br/>・リトライロジック]
-        COST[tools/cost_analysis.py<br/>価格転嫁検討ツール<br/>・コスト分析<br/>・利益率計算<br/>・参考価格算出]
-    end
-
-    FRONTEND --> API
-    API --> CORE
-    API --> DETECTOR
-    CORE --> PROMPT
-    CORE --> DIAGRAM
-    CORE --> WEB
-    CORE --> KB
-    CORE --> COST
-
-    style FRONTEND fill:#E0F7FA
-    style API fill:#FFE4B5
-    style CORE fill:#C8E6C9
-    style PROMPT fill:#FFF9C4
-    style DETECTOR fill:#FFECB3
-    style DIAGRAM fill:#B3E5FC
-    style WEB fill:#B3E5FC
-    style KB fill:#B3E5FC
-    style COST fill:#B3E5FC
-```
-
-## ステップ判定の柔軟性
-
-```mermaid
-graph TD
-    Question[ユーザーの質問] --> Type{質問タイプ}
-
-    Type -->|ステップ特化| Specific[現在のステップ<br/>コンテキストで回答]
-    Type -->|全般的な質問| General[ステップに関係なく<br/>一般的に回答]
-    Type -->|別のステップ| Other[その質問に回答<br/>+ ステップ変更提案]
-
-    Specific --> Keep1[ステップ維持]
-    General --> Keep2[ステップ維持]
-    Other --> Suggest{ステップ変更?}
-
-    Suggest -->|Yes| Change[新しいステップで<br/>エージェント再初期化]
-    Suggest -->|No| Keep3[ステップ維持]
-
-    style Type fill:#FFECB3
-    style Specific fill:#C8E6C9
-    style General fill:#B3E5FC
-    style Other fill:#FFE4B5
-```
+**詳細なシステムマップは [system-map.html](./system-map.html) を参照してください。**
 
 ---
 
-## 重要なポイント
+## 🧠 2. 3層エージェント・アーキテクチャ
 
-### 1. ステップ判定は質問の最初に自動実行（重要な変更点）
+### 2.1 Orchestrator Agent（親エージェント・司令塔）
 
-- **旧仕様**: エージェントが手動で `detect_current_step` ツールを呼び出す
-- **新仕様**: バックエンドで質問の最初に自動実行（[api/main.py:221-289](api/main.py#L221-L289)）
-- **メリット**:
-  - エージェントがツールを呼び出す必要がない
-  - ステップ判定が確実に実行される
-  - 判定結果に基づいてエージェントが最適なプロンプトで初期化される
+#### 役割
+全てのユーザーリクエストの入り口として、モード判定と適切なエージェントへの振り分けを担当。
 
-### 2. プロンプトの動的切り替え（3つのプロンプトを結合）
+#### 責務
+- **ユーザー入力を毎回受け取る**: 全リクエストの入り口（フロントドア）
+- **モード判定**: ユーザーの発言が「Mode 1: よろず相談」か「Mode 2: 価格転嫁専門」かを判定
+- **モード切り替え処理**: モードが変わった場合、ユーザー承諾を取得してから切り替え
+- **セッション状態の更新**: 現在のモード、会話履歴をセッションに保存
+- **適切な子エージェントへの委譲**: Mode 1 AgentまたはMode 2 Agentに処理を委譲
 
-- **基本プロンプト** + **ユーザー情報プロンプト** + **ステップ別追加プロンプト**
-- ユーザー情報がある場合は、業種や規模に応じた具体的なアドバイスを提供
-- ステップ判定後、エージェントを再初期化して最適化
+#### 判定方式
+- **キーワードベース判定**: 「値上げ」「価格転嫁」「コスト増」「買いたたき」「下請法」等のキーワードを検知
+- **軽量LLM推論**: キーワードで判定できない場合のみ、LLMに問い合わせ（最小トークン使用）
+- **判定頻度**: 毎回（全リクエスト）
 
-### 3. ツールの推奨使用
+#### 特性
+- **ステートレス（状態を持たない）**: 判定だけを行い、ビジネスロジックは持たない
+- **高速・軽量**: 最小限の推論で迅速にルーティング
+- **LLM**: Claude 4.5 Haiku
 
-- 各ステップに応じて推奨ツールを自動的に使用
-- 例: CHECK 3 では `search_knowledge_base` + `calculator` + `generate_diagram`
-- 例: CHECK 9 では `analyze_cost_impact`（価格転嫁検討ツール）を積極的に推奨
-
-### 4. セッション状態の活用
-
-- `current_step` でステップを管理（バックエンドで管理）
-- `user_info` でユーザー企業情報を管理
-- `created_at` でセッション作成時刻を記録（図のフィルタリングに使用）
-- 会話中にステップが変わっても対応可能
-- フロントエンドでステップ表示を更新
-
-### 5. アーキテクチャの分離
-
-- **フロントエンド**: React + TypeScript（UI層）
-- **バックエンド**: FastAPI（API層、セッション管理）
-- **エージェント**: Strands Agents（ビジネスロジック層）
-- **ツール**: 各種ツール実装（機能層）
-
-### 6. ストリーミング実装
-
-- Server-Sent Events (SSE) を使用
-- リアルタイムでテキストチャンク、ステータス、ツール使用状況、ステップ更新を送信
-- ユーザー体験の向上
-
----
-
-## ツール詳細
-
-### `web_search` (tools/web_search.py)
-**目的**: Web検索を実行し、AI判定により信頼できる情報源のみを表示
-
-**機能**:
-- Tavily APIを使用したWeb検索
-- **AI信頼性判定機能**: Claude Haikuが各検索結果のURL、タイトル、コンテンツを評価
-- 信頼できる公的機関（政府機関、自治体、支援機関、企業サイト、メディアなど）のソースのみフィルタリング
-- ソース種別を自動分類（政府機関/公的機関/学術機関/業界メディア/ニュースメディア/データ提供サイト/業界団体/企業サイト）
-- 最大5件の検索結果を取得
-- **リトライロジック**: レート制限エラー時に指数バックオフで最大5回リトライ
-
-**AI信頼性判定の仕組み**:
-1. Tavily APIで検索結果を取得（多めに取得）
-2. 各結果に対して`is_trusted_source_ai()`を実行
-3. Claude Haikuが以下を判定:
-   - 信頼性の可否（is_trusted）
-   - 判定理由（reasoning）
-   - ソース種別（source_type）
-4. 信頼できると判定された結果のみを返却
-
-**判定基準**:
-- ✅ **信頼できる**: 政府機関(.go.jp)、地方自治体(.lg.jp)、公的支援機関、大学・研究機関(.ac.jp)、信頼できる業界団体、企業サイト、メディア、データ提供サイト
-- ❌ **信頼できない**: 個人ブログ、アフィリエイトサイト、まとめサイト、広告目的サイト
-
-### `search_knowledge_base` (tools/knowledge_base.py)
-**目的**: AWS Bedrock Knowledge Baseから価格転嫁関連情報を検索
-
-**機能**:
-- ナレッジベースID: `7SM8UQNQFL` (ap-northeast-1)
-- セマンティック検索（ベクトル検索）
-- 最大5件の結果を取得
-- 出典ファイル名とスコアを表示
-- S3ロケーションから元ファイルを特定
-- **リトライロジック**: レート制限エラー時に指数バックオフで最大5回リトライ
-
-**使用場面**:
-- Knowledge Baseを最優先で使用
-- 公式ガイドラインや価格転嫁事例を検索
-- 具体的な手順やチェックリストの取得
-
-### `detect_current_step` (tools/step_detector.py)
-**目的**: ユーザーの質問から価格転嫁プロセスのステップを自動判定
-
-**機能**:
-- Claude Haikuを使用したLLMベース判定
-- STEP 0 (CHECK 1〜9) および STEP 1〜5 に対応
-- 判定理由と信頼度（high/medium/low）を返却
-- 詳細なデバッグログ機能
-- 会話の文脈を考慮した判定
-- **リトライロジック**: レート制限エラー時に指数バックオフで最大5回リトライ
-
-**判定フロー**:
-1. ユーザーの質問内容と会話文脈を分析
-2. 価格転嫁プロセスの各ステップ定義と照合
-3. 最も関連性の高いステップを判定
-4. JSON形式で結果を返却: `{"step": "STEP_0_CHECK_3", "confidence": "high", "reasoning": "..."}`
-
-**重要**: バックエンドで質問の最初に自動実行（エージェントが手動で呼び出す必要なし）
-
-### `analyze_cost_impact` (tools/cost_analysis.py)
-**目的**: コスト高騰の影響を分析し、価格転嫁の必要性を判定
-
-**使用場面**: STEP 0 - CHECK 9（価格転嫁の必要性判定）
-
-**機能**:
-- コスト高騰前と現在のデータを比較
-- 利益率の変化を計算
-- 各コスト項目の増減率・増減額を計算
-- コスト高騰前の利益率を維持するための参考価格を算出
-- 価格転嫁の必要性を判定
-- **自動図生成**: 分析結果に基づいて棒グラフを自動生成（図示用データを含む）
-
-**フロントエンド連携**:
-- STEP 9判定時、「📊 価格転嫁検討ツールで分析する」ボタンを表示
-- モーダルでデータ入力 → 分析実行 → 結果をエージェントに送信 → 要約 + 図生成
-
-### `generate_diagram` (tools/diagram_generator.py)
-**目的**: データを可視化する図を自動生成
-
-**機能**:
-- 4種類の図に対応: 棒グラフ、折れ線グラフ、フローチャート、ネットワーク図
-- description からデータを自動抽出（JSON形式、テーブル形式、リスト形式）
-- 生成された図は `diagrams/` フォルダに保存
-- セッションに紐づく図のみ表示（セッション作成時刻以降の図）
-- UI上で最新の図を自動表示（アシスタントメッセージの直後）
-- 日本語フォント対応（Windows/macOS/Linux）
-
-**使用場面**:
-- 原価構造の可視化（STEP 0 - CHECK 3）
-- 価格推移のグラフ化
-- プロセスフローの図示
-- コスト分析結果の可視化（STEP 0 - CHECK 9）
-
----
-
-## データフロー: Web検索（AI信頼性判定付き）
-
-```mermaid
-sequenceDiagram
-    participant Agent as エージェント
-    participant WebTool as web_search
-    participant Tavily as Tavily API
-    participant AIJudge as AI信頼性判定
-    participant Haiku as Claude Haiku
-
-    Agent->>WebTool: クエリで検索実行
-    WebTool->>Tavily: 検索リクエスト（多めに取得）
-    Tavily-->>WebTool: 検索結果（複数件）
-
-    loop 各検索結果
-        WebTool->>AIJudge: URL, タイトル, コンテンツ
-        AIJudge->>Haiku: 信頼性判定プロンプト
-        Haiku-->>AIJudge: JSON判定結果
-        AIJudge-->>WebTool: is_trusted, reasoning, source_type
-
-        alt 信頼できる
-            WebTool->>WebTool: 結果をフィルタリング済みリストに追加
-        else 信頼できない
-            WebTool->>WebTool: 除外（理由をログ出力）
-        end
-    end
-
-    WebTool-->>Agent: 信頼できる結果のみ返却
-```
-
----
-
-## データフロー: 価格転嫁検討ツール（CHECK 9専用）
-
-```mermaid
-sequenceDiagram
-    participant User as ユーザー
-    participant UI as React UI
-    participant API as FastAPI
-    participant Agent as エージェント
-    participant CostTool as analyze_cost_impact
-    participant DiagramTool as generate_diagram
-
-    User->>UI: 「価格転嫁が必要か判断したい」
-    UI->>API: POST /api/chat
-
-    API->>API: ステップ判定<br/>→ STEP_0_CHECK_9
-    API->>Agent: エージェント再初期化<br/>(CHECK 9用プロンプト)
-
-    Agent->>UI: 「価格転嫁検討ツールを使いましょう」
-    UI->>User: 「📊 価格転嫁検討ツールで分析する」ボタン表示
-
-    User->>UI: ボタンクリック
-    UI->>User: モーダル表示
-
-    User->>UI: データ入力<br/>(コスト高騰前・現在)
-    UI->>API: POST /api/cost-analysis
-
-    API->>CostTool: 分析実行
-    CostTool-->>API: 分析結果 + 図示用データ
-
-    API->>UI: 分析結果
-    UI->>API: エージェントに結果送信<br/>(skipUserMessage=true)
-
-    API->>Agent: 分析結果を要約
-    Agent->>DiagramTool: 図生成指示<br/>(棒グラフ)
-    DiagramTool-->>Agent: 図生成完了
-
-    Agent->>UI: 要約 + 図
-    UI->>User: 表示
-```
-
----
-
-## React版への移行
-
-### アーキテクチャの変更点
-
-**旧構成（Streamlit版）:**
-- UIとバックエンドが統合（`app.py`）
-- Streamlitのセッション管理
-- Streamlit独自のストリーミング
-
-**新構成（React版）:**
-- **フロントエンド**: React + TypeScript（`frontend/`）
-- **バックエンド**: FastAPI（`api/main.py`）
-- **分離**: UI層とAPI層を明確に分離
-- **ストリーミング**: Server-Sent Events (SSE)
-- **セッション管理**: FastAPIのメモリ管理
-
-### 通信フロー
-
-```
-React UI (ポート5173)
-    ↓ HTTP POST
-FastAPI (ポート8000)
-    ↓ ステップ判定（自動実行）
-    ↓ エージェント呼び出し
-PriceTransferAgent
-    ↓ ツール実行
-各種ツール
-    ↓ 結果返却
-FastAPI
-    ↓ SSEストリーミング
-React UI (リアルタイム更新)
-```
-
-### セッション管理の違い
-
-**Streamlit版:**
+#### 実装イメージ
 ```python
-st.session_state = {
-    "session_id": str,
-    "messages": list,
-    "agent": PriceTransferAgent,
-    "current_step": str | None
+class OrchestratorAgent:
+    async def handle(self, user_input: str, session: Session) -> Response:
+        # 毎回モード判定
+        mode = await self._detect_mode(user_input, session)
+
+        # モード切り替え処理
+        if mode != session.mode:
+            if not await self._get_user_consent(mode):
+                return Response("現在のモードを継続します")
+            session.mode = mode
+
+        # 適切な子エージェントへ委譲
+        agent = self.agents[mode]  # Mode1Agent or Mode2Agent
+        return await agent.execute(user_input, session)
+
+    async def _detect_mode(self, user_input: str, session: Session) -> str:
+        # キーワードマッチング
+        keywords = ["値上げ", "価格転嫁", "コスト増", "買いたたき", "下請法"]
+        if any(kw in user_input for kw in keywords):
+            return "mode2"
+
+        # 文脈分析（軽量LLM推論）
+        confidence = await self.llm.classify(user_input, session.history)
+        return "mode2" if confidence > 0.7 else "mode1"
+```
+
+---
+
+### 2.2 Mode 1 Agent（よろず相談エージェント）
+
+#### 役割
+経営課題全般の相談に対応する汎用エージェント。
+
+#### 責務
+- **傾聴・状況整理**: ユーザーの悩みを丁寧に聞き出し、真の課題を特定
+- **幅広い経営アドバイス**: 資金繰り、人材、販路拡大、事業承継など
+- **Web検索機能**: 最新の市場動向、業界ニュース、統計データをリアルタイムで取得
+- **メンタルケア**: 経営者の孤独感や不安に寄り添う
+
+#### 技術構成
+- **LLM**: Claude 4.5 Haiku
+- **プロンプト戦略**: 傾聴・共感を重視した対話型
+- **外部API**: Web Search API（市場動向、ニュース検索）
+- **メモリ管理**: LLMのコンテキストウィンドウで会話履歴を保持
+
+#### 特性
+- **ステートレス（軽量）**: 複雑な状態管理は不要
+- **柔軟な対応**: 特定のプロセスに縛られない自由な対話
+
+---
+
+### 2.3 Mode 2 Agent（価格転嫁専門エージェント）
+
+#### 役割
+価格交渉に特化した専門家エージェント。14ステップのプレイブックに沿って徹底サポート。
+
+#### 責務
+- **ステップ判定**: 会話履歴全体から現在のステップ（CHECK 1-9 / STEP 1-5）を自動判定
+- **進捗管理**: 完了したステップをセッションに記録し、継続的な支援を実現
+- **ツール自動選択**: 判定したステップに応じて、最適なツール（6つの専門ツール）を自動選択・実行
+- **依存関係チェック**: ステップ間の前提条件を考慮（例: CHECK 9にはCHECK 3が必要）
+- **成果物管理**: 生成されたグラフ、文書、試算表などをセッションに紐付けて保存
+
+#### ステップ判定方式
+- **入力情報**:
+  - 会話履歴全体（LLMコンテキスト）
+  - 直近のユーザー発言
+  - ユーザー属性データ（業種、企業規模等）
+  - これまでに実行したツールの履歴
+- **判定ロジック**:
+  - LLMに対して「現在のステップを特定せよ」という推論タスクを実行
+  - 14ステップ（CHECK 1-9, STEP 1-5）のいずれかを出力
+  - 複数ステップが該当する場合は優先度を判定
+- **出力**: ステップID（例: `CHECK_3`, `STEP_4`）
+
+#### 進捗管理構造
+```python
+session.mode2_progress = {
+    "completed_steps": ["CHECK_2", "CHECK_3"],
+    "current_step": "CHECK_6",
+    "data": {
+        "CHECK_2": {
+            "graph_url": "s3://bucket/session123/market_graph.png",
+            "increase_rate": 35
+        },
+        "CHECK_3": {
+            "cost_breakdown": {...},
+            "excel_url": "s3://bucket/session123/cost_analysis.xlsx"
+        }
+    }
 }
 ```
 
-**React版:**
-- **バックエンド**: FastAPIのメモリ上で管理
+#### 技術構成
+- **LLM**: Claude 4.5 Haiku
+- **プロンプト戦略**: ステップ特化型プロンプトを動的にロード
+- **専門ツール**: 6つの高度なツール（後述）
+- **外部API**: Web Search API, RAG Service, S3 Storage
+- **メモリ管理**:
+  - 会話履歴をLLMコンテキストで保持
+  - 構造化データ（原価情報、取引先リスト等）をJSON形式でプロンプトに埋め込み
+  - セッションが長くなった場合は自動要約でコンテキスト圧縮
+
+#### 特性
+- **ステートフル（状態を保持）**: 進捗データをセッションに保存し、モード切り替え後も復元可能
+- **体系的な支援**: 14ステップのプレイブックに沿った段階的サポート
+- **証拠ベース**: 全ての提案に出典・根拠を明示
+
+#### 実装イメージ
 ```python
-sessions[session_id] = {
-    "session_id": str,
-    "messages": list,
-    "agent": PriceTransferAgent,
-    "current_step": str | None,
-    "user_info": dict | None,
-    "created_at": float
+class Mode2Agent:
+    async def execute(self, user_input: str, session: Session) -> Response:
+        # ステップ判定
+        step = await self._detect_step(user_input, session)
+
+        # ツール実行
+        result = await self._execute_tool_for_step(step, user_input, session)
+
+        # 進捗更新
+        session.mode2_progress["current_step"] = step
+        if self._is_step_completed(result):
+            session.mode2_progress["completed_steps"].append(step)
+            session.mode2_progress["data"][step] = result.data
+
+        return Response(result.message, attachments=result.files)
+
+    async def _detect_step(self, user_input: str, session: Session) -> str:
+        prompt = f"""
+        会話履歴: {session.history}
+        ユーザー発言: {user_input}
+        完了済みステップ: {session.mode2_progress["completed_steps"]}
+
+        現在のステップをCHECK_1〜CHECK_9, STEP_1〜STEP_5の中から選択せよ。
+        """
+        return await self.llm.infer(prompt)
+```
+
+---
+
+### 2.4 セッション管理とメモリ継続性
+
+#### セッション構造
+```python
+class Session:
+    session_id: str
+    user_id: str
+    mode: str  # "mode1" or "mode2"
+    history: List[Message]  # 会話履歴
+    mode2_progress: Dict  # Mode 2の進捗データ
+    user_attributes: Dict  # 業種、企業規模等
+    created_at: datetime
+    updated_at: datetime
+```
+
+#### メモリ継続性の実現
+- **Orchestratorを毎回通過**: 全リクエストがOrchestratorを経由するため、セッション状態を常に更新
+- **Mode 2進捗の永続化**: `mode2_progress`はセッションに保存され、Mode 1に切り替わっても保持
+- **モード切り替え後の復元**: Mode 2に戻った際、以前の進捗状態から継続可能
+
+#### 実装パターン（段階的アプローチ）
+1. **プロトタイプ段階**: LLMコンテキストのみで会話履歴を保持
+2. **初期リリース**: In-Memoryストア（Python辞書 `SESSIONS = {}`）でセッション管理
+3. **本番運用**: Redis / DynamoDB等の永続ストアに移行
+
+---
+
+## 🛠️ 3. 6つの専門ツール（Mode 2専用）
+
+### 3.1 ツール一覧と役割
+
+| ツール名 | 役割 | 使用タイミング | 主要技術 |
+|---------|------|--------------|---------|
+| `market_analysis` | 市場データ分析・グラフ生成 | CHECK 2, STEP 1 | Web Search API, Pandas, Matplotlib |
+| `company_research` | 取引先調査・財務分析 | CHECK 6, STEP 2 | Web Search API, LLM (情報抽出) |
+| `analyze_cost_impact` | コスト試算・松竹梅プラン生成 | CHECK 3, CHECK 9 | NumPy, Pandas, RAG, Excel出力 |
+| `scenario_generator` | 交渉シナリオ作成・ロールプレイ | CHECK 7, STEP 4 | LLM (Multi-Agent), RP評価エンジン |
+| `document_generator` | 文書自動生成 | 全ステップ | Jinja2, python-docx, openpyxl, PDF生成 |
+| `search_knowledge_base` | 法務知識検索 | CHECK 8, 随時 | RAG (S3 + Vector Search), LLM |
+
+### 3.2 ツール連携の実例
+
+**CHECK 9（最終試算）での自動連携フロー:**
+1. `market_analysis` → 原材料費の上昇率データ取得（例: +20%）
+2. `analyze_cost_impact` → 上昇率を元にコスト試算・松竹梅プラン生成
+3. `search_knowledge_base` → 計算式の法的根拠を確認（労務費転嫁指針）
+4. `document_generator` → 試算表をExcelで出力、グラフを資料に統合
+5. `scenario_generator` → 試算結果を元に交渉シナリオ作成
+6. `company_research` → 相手の支払い能力を確認（増収増益なら強気交渉）
+
+→ これら全てが自動的に連携し、ユーザーは対話するだけで完璧な交渉準備が整う。
+
+---
+
+## 🔄 4. 実行フロー
+
+### 4.1 リクエスト処理の全体フロー
+
+```
+1. ユーザーがメッセージ送信
+    ↓
+2. Orchestrator Agentがリクエストを受信
+    ↓
+3. Orchestrator: モード判定を実行
+    - キーワードマッチング: 「値上げ」「価格転嫁」「コスト増」等を検知
+    - 文脈分析（LLM推論）: キーワードがない場合のみ実行
+    - 出力: "mode1" or "mode2"
+    ↓
+4. Orchestrator: モード切り替え判定
+    - IF 現在のモード ≠ 判定結果:
+        → ユーザー承諾を取得
+        → セッションのモードを更新
+    ↓
+5. Orchestrator: 適切な子エージェントへ委譲
+    - Mode 1 Agent へ → または
+    - Mode 2 Agent へ →
+    ↓
+6a. Mode 1 Agent（よろず相談）          6b. Mode 2 Agent（価格転嫁専門）
+    - 傾聴・アドバイス                      - ステップ判定を実行
+    - Web検索で情報収集                     - 会話履歴から現在のステップを特定
+    - LLMで応答生成                         - ツール自動選択
+    - レスポンス返却                        - 該当ツールを実行
+                                            - 進捗データを更新
+                                            - レスポンス返却
+    ↓
+7. ユーザーに応答を返却
+    ↓
+8. セッション状態を保存（会話履歴、モード、進捗等）
+```
+
+### 4.2 モード判定の詳細
+
+#### Orchestrator Agentのモード判定ロジック
+
+```python
+async def _detect_mode(self, user_input: str, session: Session) -> str:
+    # ステップ1: キーワードベース判定（高速）
+    keywords_mode2 = [
+        "値上げ", "価格転嫁", "コスト増", "買いたたき", "下請法",
+        "原材料高騰", "人件費アップ", "赤字受注", "取引条件", "見積もり"
+    ]
+    if any(kw in user_input for kw in keywords_mode2):
+        return "mode2"
+
+    # ステップ2: 文脈分析（LLM推論、キーワードがない場合のみ）
+    prompt = f"""
+    ユーザー発言: {user_input}
+    会話履歴: {session.history[-5:]}  # 直近5件
+
+    この発言が「価格転嫁・値上げ交渉」に関連する内容か判定せよ。
+    関連する場合は1、関連しない場合は0を出力。
+    """
+    result = await self.llm.classify(prompt)
+    confidence = float(result)
+
+    return "mode2" if confidence > 0.7 else "mode1"
+```
+
+### 4.3 ステップ判定の詳細（Mode 2 Agent内）
+
+#### Mode 2 Agentのステップ判定ロジック
+
+```python
+async def _detect_step(self, user_input: str, session: Session) -> str:
+    prompt = f"""
+    あなたは価格転嫁支援エージェントです。以下の情報から、ユーザーが現在取り組んでいるステップを特定してください。
+
+    【会話履歴】
+    {session.history}
+
+    【ユーザーの最新発言】
+    {user_input}
+
+    【完了済みステップ】
+    {session.mode2_progress["completed_steps"]}
+
+    【ステップ一覧】
+    準備編:
+    - CHECK_1: 取引条件・業務内容の確認
+    - CHECK_2: データの証拠化
+    - CHECK_3: 精緻な原価計算
+    - CHECK_4: 戦略的単価表の作成
+    - CHECK_5: 見積書フォーマット刷新
+    - CHECK_6: 取引先の経営分析
+    - CHECK_7: 代替不可能性の言語化
+    - CHECK_8: 法令違反リスクチェック
+    - CHECK_9: 必達目標額の決定
+
+    実践編:
+    - STEP_1: 外堀を埋める
+    - STEP_2: ターゲット選定
+    - STEP_3: 交渉の申し入れ
+    - STEP_4: 交渉本番
+    - STEP_5: アフターフォロー
+
+    現在のステップを上記から1つ選んで、そのIDのみを出力してください（例: CHECK_3）。
+    """
+
+    step_id = await self.llm.infer(prompt)
+    return step_id.strip()
+```
+
+#### ツール自動選択
+
+```python
+STEP_TOOL_MAPPING = {
+    "CHECK_1": ["document_generator"],
+    "CHECK_2": ["market_analysis"],
+    "CHECK_3": ["analyze_cost_impact", "search_knowledge_base"],
+    "CHECK_4": ["document_generator"],
+    "CHECK_5": ["document_generator"],
+    "CHECK_6": ["company_research"],
+    "CHECK_7": ["scenario_generator"],
+    "CHECK_8": ["search_knowledge_base"],
+    "CHECK_9": ["analyze_cost_impact"],
+    "STEP_1": ["market_analysis"],
+    "STEP_2": ["company_research"],
+    "STEP_3": ["document_generator"],
+    "STEP_4": ["scenario_generator", "document_generator"],
+    "STEP_5": ["document_generator"],
 }
-```
-- **フロントエンド**: React Stateで表示用データを保持
-```typescript
-const [sessionId, setSessionId] = useState<string | null>(null)
-const [messages, setMessages] = useState<Message[]>([])
-const [currentStep, setCurrentStep] = useState<string | null>(null)
-const [userInfo, setUserInfo] = useState<UserInfo>({})
-const [latestDiagram, setLatestDiagram] = useState<string | null>(null)
-```
-- API経由で同期
 
-### 起動方法
-
-詳細は `README_REACT.md` を参照。
-
-**簡単な起動:**
-```bash
-start_all.bat  # Windows
+async def _execute_tool_for_step(self, step: str, user_input: str, session: Session):
+    tools = STEP_TOOL_MAPPING.get(step, [])
+    results = []
+    for tool_name in tools:
+        tool = self.tools[tool_name]
+        result = await tool.execute(user_input, session)
+        results.append(result)
+    return results
 ```
 
-**個別起動:**
-```bash
-# ターミナル1
-python api/main.py
+### 4.4 ユーザー体験フロー例
 
-# ターミナル2
-cd frontend
-npm run dev
+#### シナリオ: 取引先の財務状況を調べたい
+
+```
+1. ユーザー: 「取引先A社の財務状況を知りたいです」
+    ↓
+2. Orchestrator: モード判定
+    - キーワード検知: 「取引先」（mode2のコンテキスト）
+    - 会話履歴から価格転嫁の文脈を確認
+    - 判定: mode2
+    ↓
+3. Orchestrator: Mode 2 Agentへ委譲
+    ↓
+4. Mode 2 Agent: ステップ判定
+    - 会話履歴: すでにCHECK 1-3が完了
+    - ユーザー発言: 「取引先の財務状況」→ CHECK 6
+    - 判定: CHECK_6
+    ↓
+5. Mode 2 Agent: ツール自動選択
+    - CHECK_6 → company_research
+    ↓
+6. company_researchツール実行:
+    - Web Search APIでA社の決算短信を検索
+    - IR情報、パートナーシップ構築宣言を取得
+    - 財務分析: 増収増益、内部留保潤沢
+    - ランク判定: S（最優先）
+    ↓
+7. Mode 2 Agent: 進捗更新
+    - session.mode2_progress["current_step"] = "CHECK_6"
+    - session.mode2_progress["completed_steps"].append("CHECK_6")
+    - session.mode2_progress["data"]["CHECK_6"] = {...}
+    ↓
+8. AI応答:
+   「A社の財務状況を分析しました。
+
+   【財務状況】
+   - 売上高: 前年比+15% (増収)
+   - 営業利益: 前年比+22% (増益)
+   - 内部留保: 潤沢（自己資本比率 65%）
+
+   【パートナーシップ構築宣言】
+   2023年に宣言済み。「サプライヤーとの共存共栄」を明記。
+
+   【総合評価】
+   Sランク（最優先ターゲット）
+
+   A社は支払い能力が十分にあり、かつ政府の価格転嫁推進方針に賛同しています。
+   強気の交渉が可能です。次は必達目標額の決定（CHECK 9）に進みますか？」
+    ↓
+9. ユーザーはツール名を意識せず、対話を続けるだけで適切な支援を受けられる
 ```
 
 ---
 
-## SSEイベントフロー（詳細）
+## 🌐 5. 外部連携 & データレイヤー
 
-### バックエンド → フロントエンド
+### 5.1 Web Search API
 
-| イベントタイプ | 送信タイミング | データ例 | フロントエンドの処理 |
-|-------------|------------|---------|------------------|
-| `status` | ステータス変更時 | `{"type": "status", "status": "thinking", "message": "思考中..."}` | ステータス表示を更新 |
-| `content` | テキスト生成時 | `{"type": "content", "data": "原価計算について..."}` | メッセージを更新・表示 |
-| `tool_use` | ツール使用開始時 | `{"type": "tool_use", "tool": "analyze_cost_impact", "show_modal": true}` | モーダル表示（ツールによる） |
-| `step_update` | ステップ判定後 | `{"type": "step_update", "step": "STEP_0_CHECK_3", "confidence": "high", "reasoning": "..."}` | ステップ表示を更新 |
-| `done` | 応答完了時 | `{"type": "done", "content": "..."}` | ローディング終了・最終表示 |
-| `error` | エラー発生時 | `{"type": "error", "error": "エラーメッセージ"}` | エラー表示 |
+#### 用途
+全ての外部データ取得に使用。Mode 1でも標準搭載。
 
-### ステータスメッセージのマッピング
+#### 検索対象
+- **市場データ**: 企業物価指数、最低賃金、e-Stat（政府統計）
+- **企業情報**: 決算短信、パートナーシップ構築宣言、IR情報
+- **ニュース**: 業界動向、値上げニュース、経営者インタビュー
+- **統計データ**: 厚労省賃金統計、経産省エネルギー価格統計
 
+#### 使用ツール
+- `market_analysis`: 市場データ、統計データ検索
+- `company_research`: 企業情報、ニュース検索
+
+---
+
+### 5.2 RAG Service (Knowledge Base)
+
+#### 技術構成
+- **ストレージ**: S3
+- **検索方式**: Vector Search（セマンティック検索）+ キーワード検索（ハイブリッド）
+- **検索精度**: Top-K検索（関連度上位K件を取得）
+
+#### 登録データ
+- 下請代金支払遅延等防止法（下請法）全文
+- 独占禁止法 関連条文
+- 価格転嫁円滑化施策ハンドブック（中小企業庁）
+- 労務費の適切な転嫁のための価格交渉に関する指針
+- パートナーシップ構築宣言 制度概要
+- 公正取引委員会 勧告事例集
+- 下請取引適正化推進講習会 資料
+- 原価計算の基礎（業種別モデル）
+
+#### 使用ツール
+- `search_knowledge_base`: 法務知識検索、違法性判定
+- `analyze_cost_impact`: 計算式参照（原価計算モデル）
+
+---
+
+### 5.3 S3 Storage
+
+#### 用途
+セッション単位で生成物を一時保存。
+
+#### 保存データ
+- 生成されたグラフ画像（PNG/SVG）
+- 生成された文書（PDF/Word/Excel）
+- 会話履歴（セッション終了後24時間で自動削除）
+- ユーザーアップロードファイル（見積書、契約書等）
+
+#### 使用ツール
+- `document_generator`: 文書出力先
+- `market_analysis`: グラフ保存先
+
+---
+
+### 5.4 セッション管理（詳細は2.4節を参照）
+
+#### セッション構造
 ```python
-tool_status_messages = {
-    "web_search": "検索中...",
-    "search_knowledge_base": "検索中...",
-    "generate_diagram": "図を生成中...",
-    "calculator": "計算中...",
-    "detect_current_step": "ステップを判定中...",
-    "analyze_cost_impact": "コスト分析中...",
-    "current_time": "時刻を取得中...",
-}
+class Session:
+    session_id: str           # セッション識別子
+    user_id: str              # ユーザー識別子
+    mode: str                 # 現在のモード ("mode1" or "mode2")
+    history: List[Message]    # 会話履歴
+    mode2_progress: Dict      # Mode 2の進捗データ（完了ステップ、成果物等）
+    user_attributes: Dict     # 業種、企業規模、主要取引先等
+    created_at: datetime
+    updated_at: datetime
+```
+
+#### 会話履歴の保持
+- **短期メモリ**: LLMのコンテキストウィンドウで直近の会話を保持
+- **構造化データ**: 原価情報、取引先リスト等をJSON形式でプロンプトに埋め込み
+- **自動要約**: セッションが長くなった場合、LLMが自動で要約を生成してコンテキストを圧縮
+
+#### メモリ継続性
+- **Orchestratorを毎回通過**: 全リクエストがOrchestratorを経由するため、セッション状態を常に更新
+- **Mode 2進捗の永続化**: `mode2_progress`はセッションに保存され、Mode 1に切り替わっても保持
+- **モード切り替え後の復元**: Mode 2に戻った際、以前の進捗状態から継続可能
+
+#### 実装パターン（段階的アプローチ）
+1. **プロトタイプ段階**: LLMコンテキストのみで会話履歴を保持
+2. **初期リリース**: In-Memoryストア（Python辞書 `SESSIONS = {}`）でセッション管理
+3. **本番運用**: Redis / DynamoDB等の永続ストアに移行
+
+---
+
+## 💻 6. 技術スタック
+
+### 6.1 フロントエンド
+- **フレームワーク**: React
+- **UI**: チャットインターフェース
+- **状態管理**: React Hooks
+- **通信**: REST API / WebSocket（リアルタイム対話）
+
+### 6.2 バックエンド
+
+#### LLM
+- **モデル**: Claude 4.5 Haiku（全モード共通）
+- **プロンプト戦略**: モード別・ステップ別に動的にプロンプトを構築
+
+#### 言語・フレームワーク
+- **言語**: Python 3.11+
+- **フレームワーク**: FastAPI（非同期処理対応）
+
+#### 主要ライブラリ
+- **Web検索**: Web Search API SDK
+- **データ分析**: Pandas, NumPy
+- **可視化**: Matplotlib, Seaborn
+- **文書生成**: Jinja2, python-docx, openpyxl, ReportLab (PDF)
+- **RAG**: LangChain, FAISS / Pinecone (Vector Search)
+- **LLM連携**: Anthropic SDK
+
+### 6.3 インフラ
+- **クラウド**: AWS
+- **ストレージ**: S3
+- **知識ベース**: S3 + Vector Search (FAISS / Pinecone)
+- **コンピュート**: ECS / Lambda（サーバーレス）
+- **API Gateway**: AWS API Gateway
+- **認証**: AWS Cognito
+
+### 6.4 データフロー（3層エージェント・アーキテクチャ）
+
+```
+ユーザー入力
+    ↓
+[React UI] → REST API
+    ↓
+[FastAPI Backend]
+    ↓
+┌─────────────────────────────────────────┐
+│ Orchestrator Agent (親エージェント)      │
+│ - 全リクエストの受け口                   │
+│ - モード判定（キーワード + LLM推論）     │
+│ - モード切り替え処理                     │
+│ - セッション状態更新                     │
+│ - LLM: Claude 4.5 Haiku                 │
+└─────────────────────────────────────────┘
+    ↓（毎回判定）
+┌─────────────────────────────────────────┐
+│ 適切な子エージェントへ振り分け           │
+└─────────────────────────────────────────┘
+    ↓
+┌──────────────────────┬──────────────────────┐
+│ Mode 1 Agent         │ Mode 2 Agent         │
+│ (よろず相談)          │ (価格転嫁専門)        │
+│                      │                      │
+│ - 傾聴・アドバイス    │ - ステップ判定       │
+│ - Web検索           │ - ツール自動選択      │
+│ - LLM応答生成       │ - 進捗管理           │
+│ - Haiku             │ - Haiku              │
+└──────────────────────┴──────────────────────┘
+    ↓                        ↓
+[Web Search API]         ┌─────────────────────┐
+                         │ 6つの専門ツール      │
+                         │ - market_analysis   │
+                         │ - company_research  │
+                         │ - analyze_cost_...  │
+                         │ - scenario_gen...   │
+                         │ - document_gen...   │
+                         │ - search_knowl...   │
+                         └─────────────────────┘
+                                ↓
+                         [外部連携]
+                         - Web Search API
+                         - RAG Service
+                         - S3 Storage
+    ↓
+[セッション永続化]
+- In-Memory / Redis / DynamoDB
+- 会話履歴、モード、進捗データ
+    ↓
+[FastAPI Backend] → 結果返却
+    ↓
+[React UI] → ユーザーに表示
 ```
 
 ---
 
-## エラーハンドリングとリトライロジック
+## 🔐 7. セキュリティ設計
 
-### リトライロジック（レート制限エラー対策）
+### 7.1 データ保護
+- **会話履歴の自動削除**: セッション終了後24時間で自動削除
+- **個人情報の匿名化**: 企業名、担当者名等を匿名化してRAGに保存
+- **アクセス制御**: AWS IAMで厳格なアクセス権限管理
 
-**対象ツール**:
-- `web_search` (AI信頼性判定部分)
-- `search_knowledge_base`
-- `detect_current_step`
+### 7.2 API保護
+- **認証**: JWTトークンベース認証
+- **レート制限**: API Gateway でリクエスト数制限
+- **HTTPS通信**: 全ての通信をTLS 1.3で暗号化
 
-**仕組み**:
-1. AWS Bedrock APIのレート制限エラー（`ThrottlingException`）を検知
-2. 指数バックオフで待機時間を計算: `wait_time = retry_delay * (2 ** attempt)`
-3. 最大5回までリトライ
-4. リトライ間隔: 2秒 → 4秒 → 8秒 → 16秒 → 32秒
-
-**実装例**:
-```python
-max_retries = 5
-retry_delay = 2  # 初期待機時間（秒）
-
-for attempt in range(max_retries):
-    try:
-        response = bedrock_runtime.invoke_model(...)
-        break  # 成功したらループを抜ける
-    except ClientError as e:
-        if e.response.get('Error', {}).get('Code', '') == 'ThrottlingException':
-            if attempt < max_retries - 1:
-                wait_time = retry_delay * (2 ** attempt)
-                print(f"⏳ {wait_time}秒待機してから再試行します...")
-                time.sleep(wait_time)
-                continue
-            else:
-                raise
-        else:
-            raise
-```
-
-### 応答の停止機能
-
-**フロントエンド**:
-- `AbortController`を使用してリクエストをキャンセル
-- 停止ボタンクリック時に`abort()`を呼び出し
-- 停止された場合、部分的な応答を履歴に追加
-
-**バックエンド**:
-- `AbortError`をキャッチして処理を中断
-- 部分的な応答をセッションに保存（空でない場合のみ）
+### 7.3 コンプライアンス
+- **下請法遵守**: 法的判断は必ず「専門家への相談を推奨」を併記
+- **個人情報保護**: GDPR/個人情報保護法に準拠
+- **データ保持ポリシー**: 最低限の期間のみ保持
 
 ---
 
-## セキュリティ考慮事項
+## 📊 8. スケーラビリティ設計
 
-### Web検索のAI信頼性判定
+### 8.1 水平スケーリング
+- **コンピュート**: ECS Auto Scalingでトラフィックに応じて自動スケール
+- **データベース**: DynamoDB（フルマネージド NoSQL）でスケーラブルなセッション管理
+- **ストレージ**: S3は無制限スケール
 
-- **目的**: 個人ブログやアフィリエイトサイトを自動除外
-- **仕組み**: Claude Haikuが各検索結果を評価し、信頼できる情報源のみを返却
-- **判定基準**: 政府機関、公的機関、企業サイト、メディアなどを優先
-
-### Knowledge Baseの優先
-
-- Knowledge Baseの情報を最優先で使用
-- 自分の事前学習知識だけで回答しない
-- 公式ガイドラインに基づくアドバイス
-
-### ユーザーデータの管理
-
-- セッション状態はメモリ上のみ（永続化なし）
-- ユーザー情報はセッション内で管理
-- セッションIDによる分離
+### 8.2 パフォーマンス最適化
+- **キャッシング**:
+  - Web検索結果を15分間キャッシュ（同一クエリの重複検索を回避）
+  - RAG検索結果をRedisでキャッシュ
+- **非同期処理**:
+  - 重いツール（market_analysis, company_research）は非同期実行
+  - ユーザーには「分析中...」のストリーミング表示
+- **バッチ処理**:
+  - 複数ツールの並列実行（例: CHECK 9で6つのツールを並列起動）
 
 ---
 
-## パフォーマンス最適化
+## 🧪 9. テスト戦略
 
-### 図のセッション紐付け
+### 9.1 単体テスト
+- **対象**: 各ツールの機能単位（pytest使用）
+- **カバレッジ目標**: 80%以上
 
-- セッション作成時刻（`created_at`）を記録
-- セッション作成時刻以降の図のみを表示
-- 他のセッションの図は表示しない
+### 9.2 統合テスト
+- **対象**: ツール連携フロー（例: CHECK 9の6ツール連携）
+- **シナリオテスト**: 14ステップ全てをシミュレーション
 
-### ストリーミングの最適化
+### 9.3 E2Eテスト
+- **対象**: ユーザーフロー全体（Mode 1 → Mode 2 → 交渉成功）
+- **ツール**: Playwright（ブラウザ自動化）
 
-- テキストチャンクを即座に送信
-- ステータス表示でユーザーに進行状況を通知
-- ツール使用中もリアルタイムで表示
-
-### セッション管理の効率化
-
-- メモリ上で管理（高速アクセス）
-- セッションIDによる分離（複数ユーザー対応）
-- 再起動でリセット（メモリリーク防止）
+### 9.4 LLM品質テスト
+- **プロンプトテスト**: 各ステップのプロンプトが意図通りに動作するか検証
+- **評価指標**: 正答率、適切なツール選択率、ユーザー満足度
 
 ---
 
-## 今後の拡張性
+## 🚀 10. デプロイメント戦略
 
-### データベース化
+### 10.1 CI/CD
+- **ツール**: GitHub Actions
+- **フロー**:
+  1. コミット → 自動テスト実行
+  2. テスト成功 → Dockerイメージビルド
+  3. ECRにプッシュ
+  4. ECSにデプロイ（Blue-Green Deployment）
 
-- 会話履歴の永続化（PostgreSQL、MongoDBなど）
-- ユーザー情報の管理
-- セッション情報の永続化
+### 10.2 環境分離
+- **開発環境 (Dev)**: 開発者用、自由にテスト可能
+- **ステージング環境 (Staging)**: 本番同等の環境でQA
+- **本番環境 (Production)**: エンドユーザー向け、高可用性・高信頼性
 
-### 認証・認可
-
-- ユーザー認証（JWT、OAuth2など）
-- セッション管理の強化
-- アクセス制御
-
-### スケーラビリティ
-
-- 複数サーバー対応（ロードバランサー）
-- セッション管理の外部化（Redis、Memcachedなど）
-- CDN対応（静的ファイル配信）
+### 10.3 監視・ログ
+- **監視**: AWS CloudWatch でメトリクス監視
+- **ログ**: CloudWatch Logs で集約管理
+- **アラート**: エラー率・レスポンス時間の異常を検知して通知
 
 ---
 
-## 付録: 主要なコードリファレンス
+## 📈 11. KPI & モニタリング
 
-### エージェント初期化
-- [agent/core.py:16-35](agent/core.py#L16-L35): `PriceTransferAgent.__init__()`
-- [agent/core.py:59-94](agent/core.py#L59-L94): `get_system_prompt()`
-- [agent/core.py:96-130](agent/core.py#L96-L130): `_build_user_info_prompt()`
+### 11.1 ビジネスKPI
+- **モード移行率**: Mode 1からMode 2への移行率（目標: 30%以上）
+- **ステップ完了率**: CHECK 1-9を完了したユーザーの割合（目標: 70%以上）
+- **交渉成功報告率**: STEP 4（交渉本番）後の成功報告率（目標: 60%以上）
+- **ツール利用率**: 各専門ツールの起動回数・利用率
+- **ユーザー満足度**: NPS（Net Promoter Score）（目標: 50以上）
 
-### ステップ判定
-- [api/main.py:221-289](api/main.py#L221-L289): 質問の最初にステップ判定を自動実行
-- [tools/step_detector.py:11-225](tools/step_detector.py#L11-L225): `detect_current_step()`
+### 11.2 技術KPI
+- **レスポンス時間**: API応答時間（目標: p95 < 2秒）
+- **ツール実行時間**: 各ツールの実行時間（目標: p95 < 5秒）
+- **エラー率**: API・ツールのエラー率（目標: < 0.1%）
+- **可用性**: システム稼働率（目標: 99.9%以上）
 
-### ツール実装
-- [tools/web_search.py:10-152](tools/web_search.py#L10-L152): AI信頼性判定
-- [tools/knowledge_base.py:10-144](tools/knowledge_base.py#L10-L144): Knowledge Base検索
-- [tools/cost_analysis.py:106-272](tools/cost_analysis.py#L106-L272): 価格転嫁検討ツール
-- [tools/diagram_generator.py:338-408](tools/diagram_generator.py#L338-L408): 図生成
+### 11.3 コスト管理
+- **LLM API費用**: Claudeトークン使用量の監視
+- **Web Search API費用**: 検索クエリ数の監視
+- **インフラ費用**: AWS各サービスの利用料監視
 
-### フロントエンド
-- [frontend/src/App.tsx:96-153](frontend/src/App.tsx#L96-L153): ユーザー情報入力とセッション初期化
-- [frontend/src/App.tsx:252-433](frontend/src/App.tsx#L252-L433): チャット送信とSSEストリーミング
-- [frontend/src/App.tsx:436-557](frontend/src/App.tsx#L436-L557): 価格転嫁検討ツール
+---
+
+## 🔮 12. 今後の拡張可能性
+
+### 12.1 新モードの追加
+- **Mode 3: 資金繰り支援モード**: キャッシュフロー改善、融資支援
+- **Mode 4: 人材採用支援モード**: 求人票作成、面接サポート
+- **Mode 5: 販路拡大支援モード**: マーケティング戦略、営業支援
+
+### 12.2 機能拡張
+- **多言語対応の強化**: 中国語、英語での完全サポート
+- **業種特化モデル**: 製造業、建設業、IT業界等の専門版
+- **音声対応**: 音声入力・音声出力でハンズフリー対話
+- **モバイルアプリ**: iOS/Android ネイティブアプリ開発
+
+### 12.3 AI機能の高度化
+- **マルチモーダル対応**: 画像（見積書、契約書）の読み取り・分析
+- **予測分析**: 過去データから交渉成功率を予測
+- **パーソナライゼーション**: ユーザーごとに最適化された支援
+
+---
+
+## 📝 13. 補足事項
+
+### 設計思想
+- **ユーザーファースト**: 専門知識不要で、対話だけで最適な支援を提供
+- **証拠ベース**: 全ての提案に出典・根拠を明示し、信頼性を担保
+- **実行支援**: 「参考になった」で終わらせず、即座に使える成果物を出力
+
+### 技術選定の理由
+- **Claude 4.5 Haiku**: 高速・低コストで、複雑な推論タスクに対応
+- **React**: モダンなUI開発で、拡張性・保守性が高い
+- **FastAPI**: 非同期処理に強く、高パフォーマンスなAPI開発が可能
+- **AWS**: スケーラビリティ・可用性・セキュリティに優れたクラウド基盤
+
+### 関連ドキュメント
+- **要件定義書**: [REQUIREMENTS.md](./REQUIREMENTS.md)
+- **システムマップ**: [system-map.html](./system-map.html)
+
+---
+
+**最終更新日**: 2025-11-25
