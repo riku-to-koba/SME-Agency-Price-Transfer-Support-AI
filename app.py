@@ -29,13 +29,13 @@ if session_state is None:
 
 # Streamlit ページ設定
 st.set_page_config(
-    page_title="価格転嫁支援AIアシスタント",
+    page_title="中小企業サポートAI",
     layout="centered",
 )
 
 col1, col2 = st.columns([4, 1])
 with col1:
-    st.title("価格転嫁支援AIアシスタント")
+    st.title("中小企業サポートAI")
 with col2:
     if st.button("履歴クリア", type="secondary"):
         st.session_state.clear()
@@ -43,20 +43,8 @@ with col2:
 
 st.markdown("---")
 
-# 初回ウェルカムメッセージ
-if not session_state["messages"]:
-    welcome_message = (
-        "こんにちは、価格転嫁支援AIアシスタントです。\n"
-        "中小企業の皆さまの価格転嫁をサポートします。\n\n"
-        "**できること:**\n"
-        "- 価格転嫁プロセス（準備編・実践編）についてのアドバイス\n"
-        "- 原価計算や見積書作成など具体的な手順説明\n"
-        "- 業界動向や事例の検索\n"
-        "- データ可視化（グラフ生成）\n\n"
-        "**使い方:**\n"
-        "「原価計算のやり方」「見積書の作り方」「業界の価格転嫁動向を知りたい」など、聞きたいことを入力してください。"
-    )
-    session_state["messages"].append({"role": "assistant", "content": welcome_message})
+# ウェルカムメッセージはOrchestratorが管理（create_session時に自動生成）
+# ここでは何もしない
 
 
 # チャット履歴表示
@@ -74,8 +62,12 @@ for message in session_state["messages"]:
 
 # ユーザー入力
 if prompt := st.chat_input("メッセージを入力してください"):
+    print(f"[DEBUG APP] User input received: {prompt[:50]}...")
+
     # ユーザーメッセージを保存
     session_state["messages"].append({"role": "user", "content": prompt})
+    print(f"[DEBUG APP] Added user message to history")
+
     with st.chat_message("user"):
         st.markdown(prompt)
 
@@ -83,14 +75,18 @@ if prompt := st.chat_input("メッセージを入力してください"):
     with st.chat_message("assistant"):
         response_placeholder = st.empty()
         response_placeholder.markdown("思考中...")
+        print(f"[DEBUG APP] Starting stream_response()")
 
         async def stream_response():
             full_response = ""
             is_thinking = True
 
             try:
+                print(f"[DEBUG APP] Calling orchestrator.stream()...")
                 agent_stream = orchestrator.stream(session_state, prompt)
+                print(f"[DEBUG APP] Got agent_stream, starting iteration...")
                 async for event in agent_stream:
+                    print(f"[DEBUG APP] Received event: {event.get('type', 'data')}")
                     # モード更新イベント
                     if event.get("type") == "mode_update":
                         mode_text = "Mode 2 (価格転嫁特化)" if event["mode"] == "mode2" else "Mode 1 (よろず相談)"
@@ -135,8 +131,8 @@ if prompt := st.chat_input("メッセージを入力してください"):
         loop = asyncio.get_event_loop()
         full_response = loop.run_until_complete(stream_response())
 
-        # アシスタントメッセージを履歴に追加
-        session_state["messages"].append({"role": "assistant", "content": full_response})
+        # 注: アシスタントメッセージの履歴追加はOrchestrator側で行われる
+        # ここでは何もしない（二重追加を防ぐ）
 
         # 最新の図を表示（存在すれば）
         diagrams_dir = os.path.join(os.getcwd(), "diagrams")
