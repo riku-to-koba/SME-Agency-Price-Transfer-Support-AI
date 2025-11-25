@@ -138,18 +138,9 @@
         }
 
         .step-card.important {
-            border-color: #f59e0b;
-            background: #fef3c7;
-            box-shadow: 0 2px 6px rgba(245, 158, 11, 0.15);
-        }
-
-        .step-card.important::after {
-            content: '★';
-            position: absolute;
-            top: 12px;
-            right: 12px;
-            font-size: 1em;
-            color: #fbbf24;
+            border-color: #d4d4d4;
+            background: #ffffff;
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
         }
 
         .step-number {
@@ -613,8 +604,8 @@
                     <div class="step-tools">search_knowledge_base</div>
                 </div>
 
-                <div class="step-card check important" onclick="showModal('check9')">
-                    <div class="step-number">⭐ CHECK 9</div>
+                <div class="step-card check" onclick="showModal('check9')">
+                    <div class="step-number">CHECK 9</div>
                     <div class="step-title">必達目標額の決定</div>
                     <div class="step-purpose">最低・希望転嫁額を明確化</div>
                     <div class="step-tools">analyze_cost_impact</div>
@@ -647,8 +638,8 @@
                     <div class="step-tools">document_generator</div>
                 </div>
 
-                <div class="step-card step important" onclick="showModal('step4')">
-                    <div class="step-number">⭐ STEP 4</div>
+                <div class="step-card step" onclick="showModal('step4')">
+                    <div class="step-number">STEP 4</div>
                     <div class="step-title">交渉本番</div>
                     <div class="step-purpose">納得ずくで値上げを承諾させる</div>
                     <div class="step-tools">scenario_generator, document_generator</div>
@@ -781,10 +772,6 @@
                 <div class="legend-color" style="background: #f59e0b;"></div>
                 <span>実践編 STEP</span>
             </div>
-            <div class="legend-item">
-                <div class="legend-color" style="background: #fbbf24;"></div>
-                <span>★ 最重要ステップ</span>
-            </div>
         </div>
     </div>
 
@@ -855,7 +842,7 @@
                 usecase: "<strong>💬 ユースケース</strong><br>ユーザー：「原材料費が20%上がったのに、取引先は『価格据え置きで』と言ってくる」<br><br>AI：CHECK 8と判定 → search_knowledge_baseを起動<br>→ 下請法第4条第1項第5号「買いたたき」に該当する可能性が高いと判定<br>→ 公取委の勧告事例を提示し、「通常の対価を大幅に下回る額を定めることは違法」と法的根拠を明示<br>→ 「法律上、適正な価格転嫁を要請する権利がある」という自信を獲得"
             },
             check9: {
-                title: "⭐ CHECK 9: 必達目標額の決定（最重要）",
+                title: "CHECK 9: 必達目標額の決定",
                 purpose: "自社の生存に必要な「最低転嫁額」と「希望転嫁額」を明確化",
                 details: "損益分岐点シミュレーションで「これ以下では赤字」を数値化。松竹梅の3プランを用意し、交渉の落としどころを事前に設定します。",
                 tools: "💰 analyze_cost_impact: 損益分岐点シミュレーション、松竹梅プラン生成、What-If分析、キャッシュフロー影響試算",
@@ -883,7 +870,7 @@
                 usecase: "<strong>💬 ユースケース</strong><br>ユーザー：「A社の社長にアポを取りたい。どんな文面がいい？」<br><br>AI：STEP 3と判定 → document_generatorを起動<br>→ A社の特性（パートナーシップ宣言企業）を考慮し、「丁寧」トーンを選択<br>→ 「価格改定のご協議のお願い」という件名で、法的根拠と業界動向を簡潔に記載した申入書を生成<br>→ 「お願い」ではなく「協議」という対等な姿勢で、決裁権者（社長）との面談を要請<br>→ メール送信後、3日以内に返信がなければフォローアップの提案も"
             },
             step4: {
-                title: "⭐ STEP 4: 交渉本番（最重要）",
+                title: "STEP 4: 交渉本番",
                 purpose: "準備した資料とロジックを駆使し、納得ずくで値上げを承諾させる",
                 details: "グラフ、試算表、見積書を統合したプレゼン資料で説得。AIロールプレイで練習した想定問答で、あらゆる反論に対応します。",
                 tools: "📄 document_generator: 根拠資料セット統合（グラフ+試算表+見積書）、プレゼン資料生成<br>🎭 scenario_generator: 交渉シナリオ作成、想定問答集生成、ロールプレイ訓練",
