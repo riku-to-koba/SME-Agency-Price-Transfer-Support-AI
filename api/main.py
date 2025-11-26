@@ -212,8 +212,8 @@ def extract_pdf_files(text: str) -> tuple[str, list[tuple[str, str]]]:
     clean_text = re.sub(pattern, '', text, flags=re.DOTALL).strip()
     
     pdfs = []
-    documents_dir = Path(__file__).parent.parent / "documents"
-    
+    documents_dir = Path(__file__).parent.parent / "outputs" / "documents"
+
     for filename in filenames:
         filename = filename.strip()
         filepath = documents_dir / filename
@@ -295,7 +295,7 @@ async def root():
 @app.get("/api/documents")
 async def list_documents():
     """生成されたドキュメント一覧を取得"""
-    documents_dir = Path(__file__).parent.parent / "documents"
+    documents_dir = Path(__file__).parent.parent / "outputs" / "documents"
     if not documents_dir.exists():
         return {"documents": []}
     
@@ -316,8 +316,8 @@ async def list_documents():
 async def download_document(filename: str):
     """ドキュメントをダウンロード"""
     from fastapi.responses import FileResponse
-    
-    documents_dir = Path(__file__).parent.parent / "documents"
+
+    documents_dir = Path(__file__).parent.parent / "outputs" / "documents"
     filepath = documents_dir / filename
     
     if not filepath.exists():
@@ -338,8 +338,8 @@ async def download_document(filename: str):
 async def preview_document(filename: str):
     """ドキュメントをブラウザで表示（プレビュー）"""
     from fastapi.responses import FileResponse
-    
-    documents_dir = Path(__file__).parent.parent / "documents"
+
+    documents_dir = Path(__file__).parent.parent / "outputs" / "documents"
     filepath = documents_dir / filename
     
     if not filepath.exists():

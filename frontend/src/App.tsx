@@ -766,6 +766,7 @@ ${resultText}`
       await axios.post(`${API_BASE_URL}/api/session/${sessionId}/clear`)
       setMessages([])
       setCurrentStep(null)
+      setCurrentMode(null)
       
       // ウェルカムメッセージを再表示
       const welcomeMessage: Message = {
