@@ -12,6 +12,7 @@ import sys
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 # Make project root importable
@@ -33,6 +34,11 @@ app.add_middleware(
 
 # Orchestrator (holds sessions)
 orchestrator = OrchestratorAgent()
+
+# 静的ファイル（生成されたグラフ）を提供
+charts_dir = project_root / "outputs" / "charts"
+charts_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/charts", StaticFiles(directory=str(charts_dir)), name="charts")
 
 # ツール名の日本語マッピング
 TOOL_NAME_JA = {
@@ -82,15 +88,27 @@ class CostAnalysisResponse(BaseModel):
 
 
 class IdealPricingRequest(BaseModel):
-    """理想の原価計算リクエスト"""
-    material_cost: float
-    labor_cost: float
-    energy_cost: float
-    overhead: float
-    material_cost_change: float  # %
-    labor_cost_change: float     # %
-    energy_cost_change: float    # %
+    """理想の原価計算リクエスト（「去年 vs 今年」方式）
+    
+    各費目について「以前」と「現在」の金額を入力。
+    上昇率は自動計算される。
+    単位: 万円
+    """
+    # 売上
+    previous_sales: Optional[float] = None
     current_sales: Optional[float] = None
+    # 仕入れ・材料費
+    material_cost_previous: Optional[float] = None
+    material_cost_current: Optional[float] = None
+    # 人件費
+    labor_cost_previous: Optional[float] = None
+    labor_cost_current: Optional[float] = None
+    # 光熱費
+    energy_cost_previous: Optional[float] = None
+    energy_cost_current: Optional[float] = None
+    # その他経費
+    overhead_previous: Optional[float] = None
+    overhead_current: Optional[float] = None
 
 
 class IdealPricingResponse(BaseModel):
@@ -146,6 +164,29 @@ def extract_chart_images(text: str) -> tuple[str, list[str]]:
     return clean_text, images
 
 
+def extract_images_from_event(event: dict) -> list[str]:
+    """イベント辞書全体から画像データを再帰的に抽出する。
+    
+    Strands SDKのイベント構造はネストされている可能性があるため、
+    全ての値を文字列化して検索する。
+    """
+    images = []
+    
+    def search_recursive(obj):
+        if isinstance(obj, str):
+            _, found_images = extract_chart_images(obj)
+            images.extend(found_images)
+        elif isinstance(obj, dict):
+            for value in obj.values():
+                search_recursive(value)
+        elif isinstance(obj, list):
+            for item in obj:
+                search_recursive(item)
+    
+    search_recursive(event)
+    return images
+
+
 def extract_pdf_documents(text: str) -> tuple[str, list[str]]:
     """テキストからPDFドキュメントのBase64データを抽出する。
 
@@ -158,11 +199,11 @@ def extract_pdf_documents(text: str) -> tuple[str, list[str]]:
     return clean_text, pdfs
 
 
-def extract_pdf_files(text: str) -> tuple[str, list[str]]:
+def extract_pdf_files(text: str) -> tuple[str, list[tuple[str, str]]]:
     """テキストからPDFファイル名を抽出し、Base64エンコードしたデータを返す。
 
     Returns:
-        (PDFタグを除去したテキスト, Base64 PDFデータのリスト)
+        (PDFタグを除去したテキスト, [(ファイル名, Base64データ), ...] のリスト)
     """
     import base64
     
@@ -182,11 +223,59 @@ def extract_pdf_files(text: str) -> tuple[str, list[str]]:
                 with open(filepath, 'rb') as f:
                     pdf_bytes = f.read()
                     pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
-                    pdfs.append(pdf_base64)
+                    pdfs.append((filename, pdf_base64))  # ファイル名とBase64のタプル
             except Exception:
                 pass
     
     return clean_text, pdfs
+
+
+def extract_chart_image_from_path(text: str) -> tuple[str, list[str]]:
+    """テキストから保存先パスを抽出し、そのファイルをBase64エンコードして返す。
+    
+    generate_chart ツールは "**保存先**: outputs/charts/xxx.png" という形式で
+    ファイルパスを出力するため、これを検出してファイルを読み込む。
+    
+    Returns:
+        (テキスト, Base64画像データのリスト)
+    """
+    import base64
+    
+    images = []
+    
+    # "保存先: path/to/file.png" または "**保存先**: path/to/file.png" パターンを検出
+    patterns = [
+        r'\*\*保存先\*\*:\s*([^\s\n]+\.png)',
+        r'保存先:\s*([^\s\n]+\.png)',
+    ]
+    
+    for pattern in patterns:
+        matches = re.findall(pattern, text)
+        for filepath in matches:
+            # 相対パスの場合、プロジェクトルートからの相対パスとして解決
+            full_path = Path(__file__).parent.parent / filepath
+            if full_path.exists():
+                try:
+                    with open(full_path, 'rb') as f:
+                        image_bytes = f.read()
+                        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+                        images.append(image_base64)
+                        print(f"[DEBUG] Loaded image from file: {full_path}, size: {len(image_base64)}")
+                except Exception as e:
+                    print(f"[DEBUG] Failed to load image from {full_path}: {e}")
+    
+    return text, images
+
+
+def extract_chart_urls(text: str) -> list[str]:
+    """テキストから[CHART_URL]タグを抽出してURLリストを返す。
+    
+    Returns:
+        チャートURLのリスト
+    """
+    pattern = r'\[CHART_URL\](.*?)\[/CHART_URL\]'
+    urls = re.findall(pattern, text, re.DOTALL)
+    return [url.strip() for url in urls]
 
 
 # モーダル表示が必要なツールの設定
@@ -307,27 +396,35 @@ async def chat_endpoint(request: ChatMessage):
     async def stream_response():
         full_response = ""
         is_cancelled = False
-        sent_images = []  # 送信済み画像を追跡
+        sent_images = []  # 送信済み画像を追跡（Base64データ）
+        sent_pdf_filenames = set()  # 送信済みPDFファイル名を追跡
+        sent_chart_urls = set()  # 送信済みChart URLを追跡
+        last_generate_document_result = None  # generate_documentの最後の結果を保存
+        modal_triggered = False  # モーダル表示がトリガーされたかどうか
 
         # initial thinking signal
         yield f"data: {json.dumps({'type': 'status', 'status': 'thinking', 'message': '思考中...'}, ensure_ascii=False)}\n\n"
 
         try:
             async for event in orchestrator.stream(session, request.message):
-                # 任意のイベントから画像とPDFを抽出
-                event_str = str(event)
-                _, event_images = extract_chart_images(event_str)
+                # デバッグ: イベント構造を確認（本番では削除可能）
+                print(f"[DEBUG] Event received: {list(event.keys()) if isinstance(event, dict) else type(event)}")
+                
+                # 任意のイベントから画像を再帰的に抽出
+                event_images = extract_images_from_event(event)
                 for img in event_images:
                     if img not in sent_images:
                         sent_images.append(img)
+                        print(f"[DEBUG] Sending image event, size: {len(img)}")
                         yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
 
-                # PDFも抽出
-                _, event_pdfs = extract_pdf_documents(event_str)
-                for pdf in event_pdfs:
-                    if pdf not in sent_images:  # 送信済みリストを共用
-                        sent_images.append(pdf)
-                        yield f"data: {json.dumps({'type': 'pdf', 'data': pdf}, ensure_ascii=False)}\n\n"
+                # PDFファイルを抽出（イベント全体を文字列化して検索）
+                event_str = json.dumps(event, ensure_ascii=False, default=str) if isinstance(event, dict) else str(event)
+                _, event_pdfs = extract_pdf_files(event_str)
+                for filename, pdf_base64 in event_pdfs:
+                    if filename not in sent_pdf_filenames:
+                        sent_pdf_filenames.add(filename)
+                        yield f"data: {json.dumps({'type': 'pdf', 'data': pdf_base64}, ensure_ascii=False)}\n\n"
                 
                 # mode updates
                 if event.get("type") == "mode_update":
@@ -344,43 +441,84 @@ async def chat_endpoint(request: ChatMessage):
                     if tool_name in TOOLS_REQUIRING_MODAL:
                         modal_type = TOOLS_REQUIRING_MODAL[tool_name]
                         yield f"data: {json.dumps({'type': 'tool_use', 'tool': tool_name, 'show_modal': True, 'modal_type': modal_type, 'message': status_message}, ensure_ascii=False)}\n\n"
+                        modal_triggered = True  # モーダルがトリガーされた
                     else:
                         yield f"data: {json.dumps({'type': 'status', 'status': 'tool_use', 'tool': tool_name, 'message': status_message}, ensure_ascii=False)}\n\n"
                     continue
 
                 # tool result
                 if "tool_result" in event:
-                    tool_result_str = str(event.get("tool_result", ""))
+                    tool_result = event.get("tool_result", "")
+                    # tool_result が辞書の場合は文字列化
+                    if isinstance(tool_result, dict):
+                        tool_result_str = json.dumps(tool_result, ensure_ascii=False, default=str)
+                    else:
+                        tool_result_str = str(tool_result)
                     
+                    print(f"[DEBUG] Tool result received, length: {len(tool_result_str)}")
+                    print(f"[DEBUG] Contains CHART_IMAGE: {'[CHART_IMAGE]' in tool_result_str}")
+                    print(f"[DEBUG] Contains CHART_URL: {'[CHART_URL]' in tool_result_str}")
+
+                    # モーダルトリガーを検出した場合、フラグを立てる
+                    if "[COST_MODAL_TRIGGER]" in tool_result_str:
+                        modal_triggered = True
+                        # モーダル用のdoneイベントを送信して終了
+                        yield f"data: {json.dumps({'type': 'status', 'status': 'none', 'message': ''}, ensure_ascii=False)}\n\n"
+                        yield f"data: {json.dumps({'type': 'done', 'content': ''}, ensure_ascii=False)}\n\n"
+                        return  # ストリーミングを終了
+
+                    # generate_documentの結果を保存（LLMが削除した場合に備えて）
+                    if "[PDF_FILE]" in tool_result_str:
+                        last_generate_document_result = tool_result_str
+
                     # ツール結果からPDFファイルを抽出（generate_document用）
                     _, tool_pdf_files = extract_pdf_files(tool_result_str)
-                    for pdf in tool_pdf_files:
-                        if pdf not in sent_images:
-                            sent_images.append(pdf)
-                            yield f"data: {json.dumps({'type': 'pdf', 'data': pdf}, ensure_ascii=False)}\n\n"
-                    
-                    # 古いBase64形式のPDFも抽出（互換性のため）
-                    _, tool_pdfs = extract_pdf_documents(tool_result_str)
-                    for pdf in tool_pdfs:
-                        if pdf not in sent_images:
-                            sent_images.append(pdf)
-                            yield f"data: {json.dumps({'type': 'pdf', 'data': pdf}, ensure_ascii=False)}\n\n"
-                    
-                    # ツール結果から画像も抽出
+                    for filename, pdf_base64 in tool_pdf_files:
+                        if filename not in sent_pdf_filenames:
+                            sent_pdf_filenames.add(filename)
+                            yield f"data: {json.dumps({'type': 'pdf', 'data': pdf_base64}, ensure_ascii=False)}\n\n"
+
+                    # ツール結果から[CHART_URL]タグを抽出（generate_chart用）
+                    # LLMがタグを削除しても画像が表示されるよう、直接送信
+                    chart_urls = extract_chart_urls(tool_result_str)
+                    for chart_url in chart_urls:
+                        if chart_url not in sent_chart_urls:
+                            sent_chart_urls.add(chart_url)
+                            print(f"[DEBUG] 📊 Found CHART_URL in tool_result: {chart_url}")
+                            # [CHART_URL]タグを含むコンテンツを直接送信
+                            # これによりフロントエンドが画像を表示できる
+                            chart_tag = f"\n\n[CHART_URL]{chart_url}[/CHART_URL]"
+                            # full_responseに追加しておく（LLMが削除した場合のバックアップ）
+                            full_response += chart_tag
+                            yield f"data: {json.dumps({'type': 'content', 'data': chart_tag}, ensure_ascii=False)}\n\n"
+
+                    # ツール結果から画像も抽出（[CHART_IMAGE]タグから）
                     _, tool_images = extract_chart_images(tool_result_str)
                     for img in tool_images:
                         if img not in sent_images:
                             sent_images.append(img)
+                            print(f"[DEBUG] Sending image from tool_result (CHART_IMAGE tag), size: {len(img)}")
                             yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
                     
+                    # ファイルパスから画像を読み込む（フォールバック）
+                    _, file_images = extract_chart_image_from_path(tool_result_str)
+                    for img in file_images:
+                        if img not in sent_images:
+                            sent_images.append(img)
+                            print(f"[DEBUG] Sending image from file path, size: {len(img)}")
+                            yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
+
                     yield f"data: {json.dumps({'type': 'status', 'status': 'thinking', 'message': '思考中...'}, ensure_ascii=False)}\n\n"
                     continue
 
                 # content chunk
                 if "data" in event:
+                    # モーダルがトリガーされた場合は、以降のLLM出力をスキップ
+                    if modal_triggered:
+                        continue
                     full_response += event["data"]
 
-                    # 画像データを抽出
+                    # 画像データを抽出（[CHART_IMAGE]タグから）
                     clean_text, images = extract_chart_images(full_response)
 
                     # 新しい画像があれば送信
@@ -388,27 +526,30 @@ async def chat_endpoint(request: ChatMessage):
                         if img not in sent_images:
                             sent_images.append(img)
                             yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
+                    
+                    # ファイルパスからも画像を読み込む（フォールバック）
+                    _, file_images = extract_chart_image_from_path(full_response)
+                    for img in file_images:
+                        if img not in sent_images:
+                            sent_images.append(img)
+                            print(f"[DEBUG] Sending image from file path in content, size: {len(img)}")
+                            yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
 
-                    # PDFファイルを抽出（ファイル名からBase64エンコード）
-                    # 注意: タグは除去せず、フロントエンドで表示用に処理する
+                    # PDFファイルを抽出（ファイル名で重複チェック）
                     _, pdf_files = extract_pdf_files(clean_text)
-                    for pdf in pdf_files:
-                        if pdf not in sent_images:
-                            sent_images.append(pdf)
-                            yield f"data: {json.dumps({'type': 'pdf', 'data': pdf}, ensure_ascii=False)}\n\n"
-
-                    # 古いBase64形式のPDFも抽出（互換性のため）
-                    # 注意: タグは除去せず、フロントエンドで表示用に処理する
-                    _, pdfs = extract_pdf_documents(clean_text)
-                    for pdf in pdfs:
-                        if pdf not in sent_images:
-                            sent_images.append(pdf)
-                            yield f"data: {json.dumps({'type': 'pdf', 'data': pdf}, ensure_ascii=False)}\n\n"
+                    for filename, pdf_base64 in pdf_files:
+                        if filename not in sent_pdf_filenames:
+                            sent_pdf_filenames.add(filename)
+                            yield f"data: {json.dumps({'type': 'pdf', 'data': pdf_base64}, ensure_ascii=False)}\n\n"
 
                     # 古いパターンのみ除去（PDF_FILEタグは保持）
                     display_response = re.sub(r'\[IMAGE_PATH:[^\]]*\]', '', clean_text).strip()
                     display_response = re.sub(r'\[DIAGRAM_IMAGE\].+?\[/DIAGRAM_IMAGE\]', '', display_response).strip()
-                    yield f"data: {json.dumps({'type': 'content', 'data': display_response}, ensure_ascii=False)}\n\n"
+                    # モーダルトリガーを除去（モーダル表示後はAI出力を止める）
+                    display_response = re.sub(r'\[COST_MODAL_TRIGGER\]', '', display_response).strip()
+                    # 空でなければ送信
+                    if display_response:
+                        yield f"data: {json.dumps({'type': 'content', 'data': display_response}, ensure_ascii=False)}\n\n"
                     continue
         except (GeneratorExit, asyncio.CancelledError):
             is_cancelled = True
@@ -419,50 +560,103 @@ async def chat_endpoint(request: ChatMessage):
             if not is_cancelled:
                 yield f"data: {json.dumps({'type': 'status', 'status': 'none', 'message': ''}, ensure_ascii=False)}\n\n"
 
-                # グローバル変数から生成されたPDFを取得して送信
+                # LLMが[PDF_FILE]タグを削除していた場合、元のツール結果を追加
+                if last_generate_document_result and "[PDF_FILE]" not in full_response:
+                    pdf_tags = re.findall(r'\[PDF_FILE\](.*?)\[/PDF_FILE\]', last_generate_document_result)
+                    if pdf_tags:
+                        # タグを最後に追加
+                        tag_text = "\n\n" + "\n".join([f"[PDF_FILE]{tag}[/PDF_FILE]" for tag in pdf_tags])
+                        full_response += tag_text
+                        yield f"data: {json.dumps({'type': 'content', 'data': tag_text}, ensure_ascii=False)}\n\n"
+
+                # ========== 確実にグラフ画像を送信 ==========
+                # グローバル変数からファイルパスを取得して確実に送信
+                try:
+                    from tools.chart_generator import LAST_GENERATED_CHARTS
+                    if LAST_GENERATED_CHARTS:
+                        print(f"[DEBUG] 🖼️ LAST_GENERATED_CHARTS から {len(LAST_GENERATED_CHARTS)} 件の画像を送信")
+                        for chart_path in LAST_GENERATED_CHARTS:
+                            chart_file = Path(project_root) / chart_path
+                            if chart_file.exists():
+                                try:
+                                    import base64
+                                    with open(chart_file, 'rb') as f:
+                                        image_bytes = f.read()
+                                        image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+                                        if image_base64 not in sent_images:
+                                            sent_images.append(image_base64)
+                                            print(f"[DEBUG] ✅ グラフ画像を送信: {chart_path}, size: {len(image_base64)}")
+                                            yield f"data: {json.dumps({'type': 'image', 'data': image_base64}, ensure_ascii=False)}\n\n"
+                                except Exception as e:
+                                    print(f"[DEBUG] ❌ 画像読み込みエラー: {e}")
+                            else:
+                                print(f"[DEBUG] ⚠️ ファイルが存在しません: {chart_file}")
+                        # クリア
+                        LAST_GENERATED_CHARTS.clear()
+                except Exception as e:
+                    print(f"[DEBUG] グラフ送信エラー: {e}")
+
+                # ========== 確実にPDFを送信 ==========
+                # グローバル変数からPDFファイルパスを取得して確実に送信
                 try:
                     from tools.document_generator import LAST_GENERATED_PDFS
-                    import base64 as b64
-                    
-                    while LAST_GENERATED_PDFS:
-                        pdf_path = LAST_GENERATED_PDFS.pop(0)
-                        if os.path.exists(pdf_path):
-                            with open(pdf_path, 'rb') as f:
-                                pdf_bytes = f.read()
-                                pdf_base64 = b64.b64encode(pdf_bytes).decode('utf-8')
-                                yield f"data: {json.dumps({'type': 'pdf', 'data': pdf_base64}, ensure_ascii=False)}\n\n"
-                except Exception:
-                    pass
+                    if LAST_GENERATED_PDFS:
+                        print(f"[DEBUG] 📄 LAST_GENERATED_PDFS から {len(LAST_GENERATED_PDFS)} 件のPDFを送信")
+                        for pdf_path in LAST_GENERATED_PDFS:
+                            # 絶対パスか相対パスかを判定
+                            pdf_file = Path(pdf_path)
+                            if not pdf_file.is_absolute():
+                                pdf_file = Path(project_root) / pdf_path
+                            
+                            if pdf_file.exists():
+                                try:
+                                    import base64
+                                    with open(pdf_file, 'rb') as f:
+                                        pdf_bytes = f.read()
+                                        pdf_base64 = base64.b64encode(pdf_bytes).decode('utf-8')
+                                        filename = pdf_file.name
+                                        if filename not in sent_pdf_filenames:
+                                            sent_pdf_filenames.add(filename)
+                                            print(f"[DEBUG] ✅ PDFを送信: {pdf_path}")
+                                            yield f"data: {json.dumps({'type': 'pdf', 'data': pdf_base64}, ensure_ascii=False)}\n\n"
+                                except Exception as e:
+                                    print(f"[DEBUG] ❌ PDF読み込みエラー: {e}")
+                            else:
+                                print(f"[DEBUG] ⚠️ PDFファイルが存在しません: {pdf_file}")
+                        # クリア
+                        LAST_GENERATED_PDFS.clear()
+                except Exception as e:
+                    print(f"[DEBUG] PDF送信エラー: {e}")
 
                 # 最終的なテキストから画像を抽出（タグは保持）
                 clean_text, images = extract_chart_images(full_response)
                 
-                # PDFファイルを抽出（ファイル名からBase64エンコード）
-                # 注意: タグは除去せず、フロントエンドで表示用に処理する
+                # PDFファイルを抽出（ファイル名で重複チェック）
                 _, pdf_files = extract_pdf_files(clean_text)
-                for pdf in pdf_files:
-                    if pdf not in sent_images:
-                        sent_images.append(pdf)
-                        yield f"data: {json.dumps({'type': 'pdf', 'data': pdf}, ensure_ascii=False)}\n\n"
-                
-                # 古いBase64形式のPDFも抽出（互換性のため）
-                _, pdfs = extract_pdf_documents(clean_text)
+                for filename, pdf_base64 in pdf_files:
+                    if filename not in sent_pdf_filenames:
+                        sent_pdf_filenames.add(filename)
+                        yield f"data: {json.dumps({'type': 'pdf', 'data': pdf_base64}, ensure_ascii=False)}\n\n"
                 
                 # PDF_FILEタグは保持してフロントエンドで処理
                 display_response = re.sub(r'\[IMAGE_PATH:[^\]]*\]', '', clean_text).strip()
                 display_response = re.sub(r'\[DIAGRAM_IMAGE\].+?\[/DIAGRAM_IMAGE\]', '', display_response).strip()
+                # モーダルトリガーを除去
+                display_response = re.sub(r'\[COST_MODAL_TRIGGER\]', '', display_response).strip()
 
                 # 残りの画像があれば送信
                 for img in images:
                     if img not in sent_images:
                         sent_images.append(img)
                         yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
-
-                # 残りのPDFがあれば送信
-                for pdf in pdfs:
-                    if pdf not in sent_images:
-                        sent_images.append(pdf)
-                        yield f"data: {json.dumps({'type': 'pdf', 'data': pdf}, ensure_ascii=False)}\n\n"
+                
+                # ファイルパスからも画像を読み込む（最終フォールバック）
+                _, final_file_images = extract_chart_image_from_path(full_response)
+                for img in final_file_images:
+                    if img not in sent_images:
+                        sent_images.append(img)
+                        print(f"[DEBUG] Sending image from file path (final), size: {len(img)}")
+                        yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
 
                 if display_response:
                     orchestrator.append_assistant_message(session, display_response)
@@ -479,54 +673,110 @@ async def chat_endpoint(request: ChatMessage):
     )
 
 
+@app.post("/api/ideal-pricing-debug")
+async def ideal_pricing_debug(request: dict):
+    """デバッグ用：リクエストボディを確認"""
+    print(f"[DEBUG] Raw request body: {request}")
+    return {"received": request}
+
+
 @app.post("/api/ideal-pricing", response_model=IdealPricingResponse)
 async def ideal_pricing_endpoint(request: IdealPricingRequest):
-    """理想の原価計算 - 松竹梅プランを算出"""
+    """理想の原価計算 - 「去年 vs 今年」方式で松竹梅プランを算出
+    
+    上昇率は「以前」と「現在」の金額から自動計算される。
+    空欄の項目は業界平均で補完される。
+    """
+    # デバッグログ
+    print(f"[DEBUG] Received request: {request}")
     try:
-        # 現在の総コスト
-        current_total_cost = (
-            request.material_cost +
-            request.labor_cost +
-            request.energy_cost +
-            request.overhead
-        )
-
-        if current_total_cost <= 0:
+        # 業界平均の上昇率（空欄時のデフォルト値）
+        DEFAULT_INCREASE_RATES = {
+            "material_cost": 0.15,    # 材料費: +15%
+            "labor_cost": 0.05,       # 人件費: +5%
+            "energy_cost": 0.25,      # 光熱費: +25%
+            "overhead": 0.03          # その他: +3%
+        }
+        
+        # 万円 → 円に変換（入力は万円単位）
+        def to_yen(value: Optional[float]) -> float:
+            return (value or 0) * 10000
+        
+        # 各費目の処理（上昇率を自動計算）
+        def process_cost(previous: Optional[float], current: Optional[float], cost_type: str):
+            prev = to_yen(previous)
+            curr = to_yen(current)
+            
+            # 両方空欄の場合はスキップ
+            if prev == 0 and curr == 0:
+                return None
+            
+            # 片方だけ入力されている場合はデフォルト上昇率を適用
+            if prev > 0 and curr == 0:
+                change_rate = DEFAULT_INCREASE_RATES.get(cost_type, 0.10)
+                curr = prev * (1 + change_rate)
+            elif curr > 0 and prev == 0:
+                change_rate = DEFAULT_INCREASE_RATES.get(cost_type, 0.10)
+                prev = curr / (1 + change_rate)
+            else:
+                # 両方入力されている場合は上昇率を計算
+                change_rate = (curr - prev) / prev if prev > 0 else 0
+            
+            return {
+                "previous": prev,
+                "current": curr,
+                "change_rate": change_rate
+            }
+        
+        # 各費目を処理
+        costs = {}
+        cost_items = [
+            ("material_cost", request.material_cost_previous, request.material_cost_current),
+            ("labor_cost", request.labor_cost_previous, request.labor_cost_current),
+            ("energy_cost", request.energy_cost_previous, request.energy_cost_current),
+            ("overhead", request.overhead_previous, request.overhead_current),
+        ]
+        
+        for cost_type, prev, curr in cost_items:
+            result = process_cost(prev, curr, cost_type)
+            if result:
+                costs[cost_type] = result
+        
+        if not costs:
             return IdealPricingResponse(
                 success=False,
-                message="コスト構造が正しく入力されていません"
+                message="コスト情報が入力されていません。少なくとも1つの費目を入力してください。"
             )
-
-        # 価格上昇後の各コスト
-        new_material = request.material_cost * (1 + request.material_cost_change / 100)
-        new_labor = request.labor_cost * (1 + request.labor_cost_change / 100)
-        new_energy = request.energy_cost * (1 + request.energy_cost_change / 100)
-        new_overhead = request.overhead  # 経費は変動なしと仮定
-
-        new_total_cost = new_material + new_labor + new_energy + new_overhead
-        total_cost_increase = new_total_cost - current_total_cost
-        cost_increase_rate = (total_cost_increase / current_total_cost) * 100
-
-        # 売上高の推計（未指定の場合）
-        if request.current_sales and request.current_sales > 0:
-            current_sales = request.current_sales
-        else:
-            # 利益率8%を仮定
+        
+        # 総コストの計算
+        previous_total_cost = sum(c["previous"] for c in costs.values())
+        current_total_cost = sum(c["current"] for c in costs.values())
+        total_cost_increase = current_total_cost - previous_total_cost
+        cost_increase_rate = (total_cost_increase / previous_total_cost) * 100 if previous_total_cost > 0 else 0
+        
+        # 売上高の処理
+        current_sales = to_yen(request.current_sales)
+        previous_sales = to_yen(request.previous_sales)
+        
+        if current_sales <= 0:
+            # 売上高が未入力の場合、コストから推計（利益率8%と仮定）
             current_sales = current_total_cost / (1 - 0.08)
-
-        # 現在の利益率
+        
+        if previous_sales <= 0:
+            previous_sales = previous_total_cost / (1 - 0.08)
+        
+        # 利益率計算
+        previous_profit = previous_sales - previous_total_cost
+        before_profit_rate = (previous_profit / previous_sales) * 100 if previous_sales > 0 else 8.0
+        
         current_profit = current_sales - current_total_cost
-        before_profit_rate = (current_profit / current_sales) * 100 if current_sales > 0 else 0
-
-        # 価格据え置き時の利益率
-        new_profit = current_sales - new_total_cost
-        new_profit_rate = (new_profit / current_sales) * 100 if current_sales > 0 else 0
+        new_profit_rate = (current_profit / current_sales) * 100 if current_sales > 0 else 0
 
         # 松竹梅シナリオを計算
         def calc_price(target_margin: float) -> float:
             if target_margin >= 100:
-                return new_total_cost * 1.2
-            return new_total_cost / (1 - target_margin / 100)
+                return current_total_cost * 1.2
+            return current_total_cost / (1 - target_margin / 100)
 
         # 松（理想）: 元の利益率 + 2%
         premium_margin = before_profit_rate + 2
@@ -557,32 +807,32 @@ async def ideal_pricing_endpoint(request: IdealPricingRequest):
             urgency_message = "利益率は維持できますが、将来に備えた交渉も検討可能です。"
             recommended = "minimum"
 
+        # コスト構造の詳細（各費目）
+        cost_structure_before = {}
+        cost_structure_after = {}
+        cost_changes = {}
+        
+        for cost_type, data in costs.items():
+            cost_structure_before[cost_type] = data["previous"]
+            cost_structure_after[cost_type] = data["current"]
+            cost_changes[cost_type] = data["change_rate"] * 100  # パーセント表示
+
         result = {
             "cost_structure": {
                 "before": {
-                    "material_cost": request.material_cost,
-                    "labor_cost": request.labor_cost,
-                    "energy_cost": request.energy_cost,
-                    "overhead": request.overhead,
-                    "total": current_total_cost,
+                    **cost_structure_before,
+                    "total": previous_total_cost,
                 },
                 "after": {
-                    "material_cost": new_material,
-                    "labor_cost": new_labor,
-                    "energy_cost": new_energy,
-                    "overhead": new_overhead,
-                    "total": new_total_cost,
+                    **cost_structure_after,
+                    "total": current_total_cost,
                 },
-                "changes": {
-                    "material_cost": request.material_cost_change,
-                    "labor_cost": request.labor_cost_change,
-                    "energy_cost": request.energy_cost_change,
-                    "overhead": 0,
-                },
+                "changes": cost_changes,
                 "total_increase": total_cost_increase,
                 "total_increase_rate": cost_increase_rate,
             },
             "profit_analysis": {
+                "previous_sales": previous_sales,
                 "current_sales": current_sales,
                 "before_profit_rate": before_profit_rate,
                 "after_profit_rate_if_unchanged": new_profit_rate,

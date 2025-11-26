@@ -39,13 +39,13 @@ if session_state is None:
 
 # Streamlit ページ設定
 st.set_page_config(
-    page_title="中小企業サポートAI",
+    page_title="中小企業経営サポートAI",
     layout="centered",
 )
 
 col1, col2 = st.columns([4, 1])
 with col1:
-    st.title("中小企業サポートAI")
+    st.title("中小企業経営サポートAI")
 with col2:
     if st.button("履歴クリア", type="secondary"):
         st.session_state.clear()

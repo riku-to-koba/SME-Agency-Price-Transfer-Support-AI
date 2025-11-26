@@ -16,6 +16,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Dict, List, Optional, Tuple
 
 from agent.mode1 import Mode1Agent
@@ -79,7 +80,6 @@ class ModeClassifier:
         try:
             # BedrockModelをAgentでラップして非同期ストリーミングで実行
             from strands import Agent
-            import re
             temp_agent = Agent(model=self.model, tools=[], system_prompt=system_prompt)
 
             # stream_asyncでレスポンスを収集
@@ -149,7 +149,6 @@ class ModeClassifier:
 """
         try:
             from strands import Agent
-            import re
             temp_agent = Agent(model=self.model, tools=[], system_prompt=system_prompt)
 
             resp_chunks = []
@@ -213,8 +212,9 @@ class OrchestratorAgent:
     def _generate_welcome_message(self) -> str:
         """初回ウェルカムメッセージを生成（自然な会話調）"""
         return (
-            "こんにちは。中小企業サポートAIです。\n\n"
-            "経営のお悩み、何でもお聞かせください。\n"
+            "こんにちは！中小企業経営サポートAIです。\n\n"
+            "資金繰り、人材、販路拡大、価格交渉、事業承継…\n"
+            "経営のお悩み、どんなことでも気軽にご相談ください。\n\n"
             "今日はどんなことでお困りですか？"
         )
 
@@ -290,66 +290,8 @@ class OrchestratorAgent:
         """Route to appropriate agent and yield streaming events."""
         print(f"[DEBUG] Orchestrator.stream() called with message: {message[:50]}...")
         print(f"[DEBUG] Session mode: {session.get('mode')}")
-        print(f"[DEBUG] Pending mode change: {session.get('pending_mode_change')}")
 
-        # === ステップ1: モード承諾待ちの処理（LLMで判定） ===
-        if "pending_mode_change" in session:
-            pending = session["pending_mode_change"]
-            
-            # LLMで承諾/拒否を判定
-            consent_context = pending.get("consent_message", "モード切り替えの提案")
-            try:
-                judgment, judgment_reason = await self.mode_classifier.judge_consent(message, consent_context)
-                print(f"[DEBUG] Consent judgment: {judgment}, reason: {judgment_reason}")
-            except Exception as e:
-                print(f"[DEBUG] Consent judgment error: {str(e)}")
-                judgment = "unclear"
-
-            if judgment == "consent":
-                # ユーザーが承諾した
-                session["mode"] = pending["mode"]
-                session["mode_confirmed"] = True
-                del session["pending_mode_change"]
-
-                if pending["mode"] == "mode2":
-                    confirm_msg = "わかりました！価格転嫁の専門モードで進めますね。\n\nまず、今回の値上げ交渉について詳しく教えてください。どの取引先に、どんな製品・サービスの価格交渉をしたいですか？"
-                else:
-                    confirm_msg = "わかりました！それでは、お悩みを詳しく聞かせてください。"
-
-                session["messages"].append({"role": "user", "content": message})
-                session["messages"].append({"role": "assistant", "content": confirm_msg})
-
-                yield {
-                    "type": "mode_update",
-                    "mode": pending["mode"],
-                    "reason": pending["reason"],
-                    "confidence": 1.0,
-                }
-                yield {"data": confirm_msg}
-                return
-
-            elif judgment == "rejection":
-                # ユーザーが拒否した
-                del session["pending_mode_change"]
-
-                reject_msg = "わかりました。では、どんなことでお手伝いしましょうか？"
-                session["messages"].append({"role": "user", "content": message})
-                session["messages"].append({"role": "assistant", "content": reject_msg})
-
-                yield {"data": reject_msg}
-                return
-
-            else:
-                # 不明確な場合、もう一度確認
-                retry_msg = "すみません、進めてよいかどうか教えていただけますか？"
-
-                session["messages"].append({"role": "user", "content": message})
-                session["messages"].append({"role": "assistant", "content": retry_msg})
-
-                yield {"data": retry_msg}
-                return
-
-        # === ステップ2: 会話履歴を構築（ユーザー + アシスタント両方） ===
+        # === ステップ1: 会話履歴を構築（ユーザー + アシスタント両方） ===
         history_text = self._build_history_context(session)
 
         # === ステップ3: LLMでモード判定 ===
@@ -384,47 +326,48 @@ class OrchestratorAgent:
             yield {"data": clarify_msg}
             return
 
-        # === ステップ5: モード切り替え判定とユーザー承諾 ===
+        # === ステップ5: モード確定（許可なしで移行） ===
         mode_changed = (session["mode"] != mode)
 
-        # 初回モード確定、またはモード切り替えが発生した場合
-        if mode_changed and not session.get("mode_confirmed"):
-            # ユーザー承諾を求める
-            consent_msg = self._request_mode_consent(mode, mode_reason)
-            session["pending_mode_change"] = {
-                "mode": mode,
-                "reason": mode_reason,
-                "consent_message": consent_msg,  # LLM判定用にコンテキストを保存
-            }
-
-            session["messages"].append({"role": "user", "content": message})
-            session["messages"].append({"role": "assistant", "content": consent_msg})
-
-            yield {"data": consent_msg}
-            return
-
-        # モードが確定済みで変更がある場合は通知のみ
         if mode_changed:
+            # モードを更新
             self.update_mode(session, mode)
+            session["mode_confirmed"] = True
+            
+            # モード変更を通知
             yield {
                 "type": "mode_update",
                 "mode": mode,
                 "reason": mode_reason,
                 "confidence": mode_confidence,
             }
+            
+            # 短い確認メッセージを表示
+            if mode == "mode2":
+                confirm_msg = (
+                    "価格転嫁の専門モードで対応します。\n\n"
+                    "📊 市場データの調査・分析\n"
+                    "💰 コスト試算と適正価格の算出\n"
+                    "📄 申入書・見積書などの文書作成\n"
+                    "🎭 交渉シミュレーション\n\n"
+                    "などのサポートができます。\n\n"
+                )
+            else:
+                confirm_msg = "経営全般のご相談として対応します。\n\n"
+            
+            yield {"data": confirm_msg}
+            session["messages"].append({"role": "assistant", "content": confirm_msg.strip()})
 
         # === ステップ6: ユーザーメッセージを履歴に追加 ===
         session["messages"].append({"role": "user", "content": message})
 
         # === ステップ7: 適切な子エージェントへ委譲 ===
-        agent_response = ""
+        # 注意: 会話履歴への追加はapi/main.pyのappend_assistant_messageで行う
+        # ここでは追加しない（画像タグ等を除去したクリーンなテキストを保存するため）
 
         if mode == "mode2":
             agent = self.ensure_mode2_agent(session)
             async for event in agent.stream_async(message):
-                # データチャンクを収集
-                if "data" in event:
-                    agent_response += event["data"]
                 yield event
         else:
             agent: Mode1Agent = session["agents"]["mode1"]
@@ -434,14 +377,10 @@ class OrchestratorAgent:
                 user_info=session.get("user_info"),
                 turn_index=turn_index,
             ):
-                # データチャンクを収集
-                if "data" in event:
-                    agent_response += event["data"]
                 yield event
 
-        # エージェント応答を履歴に追加
-        if agent_response:
-            session["messages"].append({"role": "assistant", "content": agent_response})
+        # 注意: エージェント応答の履歴追加は api/main.py の append_assistant_message で行う
+        # 理由: ツール結果（[CHART_IMAGE]タグ等）を除去したクリーンなテキストを保存するため
 
     def append_assistant_message(self, session: dict, content: str):
         session["messages"].append({"role": "assistant", "content": content})

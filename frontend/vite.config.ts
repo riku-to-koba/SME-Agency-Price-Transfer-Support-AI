@@ -11,6 +11,10 @@ export default defineConfig({
         target: 'http://localhost:8765',
         changeOrigin: true,
       },
+      '/charts': {
+        target: 'http://localhost:8765',
+        changeOrigin: true,
+      },
     },
   },
   build: {

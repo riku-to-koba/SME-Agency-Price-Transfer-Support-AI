@@ -4,6 +4,7 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import './App.css'
 import { ToolModal } from './components/ToolModal'
+import { InlineCostForm } from './components/InlineCostForm'
 import { MODAL_CONFIGS, TOOL_TO_MODAL_MAP, ModalType } from './config/modal-config'
 
 // Viteのプロキシ設定により、相対パスでアクセス
@@ -14,6 +15,8 @@ interface Message {
   content: string
   images?: string[]  // Base64画像データの配列
   pdfs?: string[]    // Base64 PDFデータの配列
+  inlineFormType?: 'cost_form'  // チャット内フォームのタイプ
+  formSubmitted?: boolean  // フォームが送信済みかどうか
 }
 
 interface ChatEvent {
@@ -87,9 +90,10 @@ function App() {
       setSessionId(response.data.session_id)
       
       // ウェルカムメッセージ（ユーザー情報に基づいてカスタマイズ）
-      let welcomeContent = `こんにちは！価格転嫁支援AIアシスタントです。
+      let welcomeContent = `こんにちは！中小企業経営サポートAIです。
 
-皆様の価格転嫁をサポートさせていただきます。`
+資金繰り、人材、販路拡大、価格交渉、事業承継…
+経営のお悩み、どんなことでも気軽にご相談ください。`
 
       // 基本情報を整理して表示
       const infoItems: string[] = []
@@ -100,7 +104,7 @@ function App() {
       if (userInfo.clientIndustry) infoItems.push(`取引先の主な業種: ${userInfo.clientIndustry}`)
       
       if (infoItems.length > 0) {
-        welcomeContent += `\n\n## 📋 ご登録いただいた基本情報\n\n`
+        welcomeContent += `\n\n**📋 ご登録いただいた基本情報**\n\n`
         infoItems.forEach(item => {
           welcomeContent += `- ${item}\n`
         })
@@ -110,16 +114,16 @@ function App() {
       welcomeContent += `
 
 **できること:**
-価格転嫁プロセス（準備編・実践編）の各ステップについてアドバイス
-原価計算や見積書作成などの具体的な手順の説明
-業界動向や事例の検索
-データの可視化（グラフ作成）
+- 経営全般のご相談（資金繰り、人材、販路拡大など）
+- 価格交渉・値上げ交渉の専門サポート
+- 市場データ分析、コスト試算、交渉資料作成
+- 業界動向の検索とデータ可視化
 
 **使い方:**
 お困りのことや知りたいことを、お気軽にご質問ください。
-例: 「原価計算のやり方を教えて」「見積書の作り方は？」「業界の価格転嫁動向を知りたい」
+例: 「資金繰りで困っている」「値上げ交渉の準備をしたい」「業界の動向を知りたい」
 
-どのようなことでお手伝いできますか？`
+今日はどんなことでお困りですか？`
 
       const welcomeMessage: Message = {
         role: 'assistant',
@@ -131,12 +135,12 @@ function App() {
       // エラー時もウェルカムメッセージを表示
       const errorMessage: Message = {
         role: 'assistant',
-        content: `こんにちは！価格転嫁支援AIアシスタントです。
+        content: `こんにちは！中小企業経営サポートAIです。
 
 申し訳ございませんが、セッションの初期化でエラーが発生しました。
 再度お試しください。
 
-どのようなことでお手伝いできますか？`
+今日はどんなことでお困りですか？`
       }
       setMessages([errorMessage])
     }
@@ -236,6 +240,8 @@ function App() {
 
       // アシスタントメッセージを追加（最初のcontentイベントで更新される）
       let hasAddedAssistantMessage = false
+      let formMessageAdded = false  // フォームメッセージが追加されたかどうか
+      let contentMessageIndex = -1  // コンテンツメッセージのインデックス
 
       try {
         while (true) {
@@ -253,24 +259,45 @@ function App() {
                 if (event.type === 'content') {
                   currentResponseRef.current = event.data || ''
 
-                  // 最初のcontentイベントでアシスタントメッセージを追加
-                  if (!hasAddedAssistantMessage) {
-                    hasAddedAssistantMessage = true
-                    setMessages(prev => [...prev, {
-                      role: 'assistant',
-                      content: currentResponseRef.current,
-                      images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
-                      pdfs: currentPdfsRef.current.length > 0 ? [...currentPdfsRef.current] : undefined,
-                    }])
-                  } else {
-                    // 既存のメッセージを更新
+                  // フォームメッセージが追加されている場合は、新しいメッセージとして追加
+                  if (formMessageAdded && contentMessageIndex === -1) {
+                    // フォームの後に新しいコンテンツメッセージを追加
                     setMessages(prev => {
-                      const newMessages = [...prev]
-                      newMessages[newMessages.length - 1] = {
+                      contentMessageIndex = prev.length
+                      return [...prev, {
                         role: 'assistant',
                         content: currentResponseRef.current,
                         images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
                         pdfs: currentPdfsRef.current.length > 0 ? [...currentPdfsRef.current] : undefined,
+                      }]
+                    })
+                    hasAddedAssistantMessage = true
+                  } else if (!hasAddedAssistantMessage) {
+                    // 最初のcontentイベントでアシスタントメッセージを追加
+                    hasAddedAssistantMessage = true
+                    setMessages(prev => {
+                      contentMessageIndex = prev.length
+                      return [...prev, {
+                        role: 'assistant',
+                        content: currentResponseRef.current,
+                        images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
+                        pdfs: currentPdfsRef.current.length > 0 ? [...currentPdfsRef.current] : undefined,
+                      }]
+                    })
+                  } else {
+                    // 既存のメッセージを更新（フォームメッセージは上書きしない）
+                    setMessages(prev => {
+                      const newMessages = [...prev]
+                      // contentMessageIndexが設定されていればそれを使う、なければ最後のメッセージ
+                      const targetIndex = contentMessageIndex >= 0 ? contentMessageIndex : newMessages.length - 1
+                      // フォームメッセージでなければ更新
+                      if (!newMessages[targetIndex]?.inlineFormType) {
+                        newMessages[targetIndex] = {
+                          role: 'assistant',
+                          content: currentResponseRef.current,
+                          images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
+                          pdfs: currentPdfsRef.current.length > 0 ? [...currentPdfsRef.current] : undefined,
+                        }
                       }
                       return newMessages
                     })
@@ -280,15 +307,18 @@ function App() {
                   if (event.data) {
                     currentImagesRef.current.push(event.data)
 
-                    // メッセージを更新して画像を追加
+                    // メッセージを更新して画像を追加（フォームメッセージは上書きしない）
                     if (hasAddedAssistantMessage) {
                       setMessages(prev => {
                         const newMessages = [...prev]
-                        newMessages[newMessages.length - 1] = {
-                          role: 'assistant',
-                          content: currentResponseRef.current,
-                          images: [...currentImagesRef.current],
-                          pdfs: currentPdfsRef.current.length > 0 ? [...currentPdfsRef.current] : undefined,
+                        const targetIndex = contentMessageIndex >= 0 ? contentMessageIndex : newMessages.length - 1
+                        if (!newMessages[targetIndex]?.inlineFormType) {
+                          newMessages[targetIndex] = {
+                            role: 'assistant',
+                            content: currentResponseRef.current,
+                            images: [...currentImagesRef.current],
+                            pdfs: currentPdfsRef.current.length > 0 ? [...currentPdfsRef.current] : undefined,
+                          }
                         }
                         return newMessages
                       })
@@ -299,15 +329,18 @@ function App() {
                   if (event.data) {
                     currentPdfsRef.current.push(event.data)
 
-                    // メッセージを更新してPDFを追加
+                    // メッセージを更新してPDFを追加（フォームメッセージは上書きしない）
                     if (hasAddedAssistantMessage) {
                       setMessages(prev => {
                         const newMessages = [...prev]
-                        newMessages[newMessages.length - 1] = {
-                          role: 'assistant',
-                          content: currentResponseRef.current,
-                          images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
-                          pdfs: [...currentPdfsRef.current],
+                        const targetIndex = contentMessageIndex >= 0 ? contentMessageIndex : newMessages.length - 1
+                        if (!newMessages[targetIndex]?.inlineFormType) {
+                          newMessages[targetIndex] = {
+                            role: 'assistant',
+                            content: currentResponseRef.current,
+                            images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
+                            pdfs: [...currentPdfsRef.current],
+                          }
                         }
                         return newMessages
                       })
@@ -328,19 +361,38 @@ function App() {
                                   // ツール使用中
                                   console.log(`[ツール使用中] ${event.tool}`)
                                   
-                                  // ツール名からモーダル種別を判定
+                                  // ツール名からフォーム種別を判定
                                   if (event.tool && event.show_modal) {
                                     const modalType = TOOL_TO_MODAL_MAP[event.tool]
-                                    if (modalType) {
-                                      setActiveModalType(modalType)
+                                    if (modalType === 'ideal_pricing') {
+                                      // チャット内フォームとして表示
+                                      const formMessage: Message = {
+                                        role: 'assistant',
+                                        content: '原価計算を行います。以下のフォームに情報を入力してください。',
+                                        inlineFormType: 'cost_form',
+                                        formSubmitted: false,
+                                      }
+                                      setMessages(prev => [...prev, formMessage])
+                                      formMessageAdded = true  // フォームメッセージが追加されたことを記録
+                                      hasAddedAssistantMessage = true
                                     } else if (event.tool === 'analyze_cost_impact') {
                                       // 後方互換性: 既存のモーダル
                                       setShowCostAnalysisModal(true)
                                     }
                                   }
                                 } else if (event.type === 'show_modal') {
-                                  // 直接モーダル表示リクエスト
-                                  if (event.modal_type) {
+                                  // 直接モーダル表示リクエスト（チャット内フォームに変換）
+                                  if (event.modal_type === 'ideal_pricing') {
+                                    const formMessage: Message = {
+                                      role: 'assistant',
+                                      content: '原価計算を行います。以下のフォームに情報を入力してください。',
+                                      inlineFormType: 'cost_form',
+                                      formSubmitted: false,
+                                    }
+                                    setMessages(prev => [...prev, formMessage])
+                                    formMessageAdded = true  // フォームメッセージが追加されたことを記録
+                                    hasAddedAssistantMessage = true
+                                  } else if (event.modal_type) {
                                     setActiveModalType(event.modal_type)
                                   }
                                 } else if (event.type === 'step_update') {
@@ -349,6 +401,12 @@ function App() {
                 } else if (event.type === 'done') {
                   // ステータスをクリア
                   setCurrentStatus('')
+
+                  // フォームメッセージのみの場合はスキップ（テキストコンテンツなし）
+                  if (formMessageAdded && !currentResponseRef.current.trim()) {
+                    // フォームメッセージのみなので何もしない
+                    continue
+                  }
 
                   // アシスタントメッセージがまだ追加されていない場合は追加
                   if (!hasAddedAssistantMessage) {
@@ -360,13 +418,17 @@ function App() {
                       pdfs: currentPdfsRef.current.length > 0 ? [...currentPdfsRef.current] : undefined,
                     }])
                   } else {
+                    // フォームメッセージを上書きしない
                     setMessages(prev => {
                       const newMessages = [...prev]
-                      newMessages[newMessages.length - 1] = {
-                        role: 'assistant',
-                        content: event.content || currentResponseRef.current,
-                        images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
-                        pdfs: currentPdfsRef.current.length > 0 ? [...currentPdfsRef.current] : undefined,
+                      const targetIndex = contentMessageIndex >= 0 ? contentMessageIndex : newMessages.length - 1
+                      if (!newMessages[targetIndex]?.inlineFormType) {
+                        newMessages[targetIndex] = {
+                          role: 'assistant',
+                          content: event.content || currentResponseRef.current,
+                          images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
+                          pdfs: currentPdfsRef.current.length > 0 ? [...currentPdfsRef.current] : undefined,
+                        }
                       }
                       return newMessages
                     })
@@ -543,6 +605,81 @@ ${diagramData}
     }
   }
 
+  // チャット内フォームの送信処理
+  const handleInlineCostFormSubmit = async (data: Record<string, number | null>, messageIndex: number) => {
+    // フォームを送信済みに更新
+    setMessages(prev => {
+      const newMessages = [...prev]
+      if (newMessages[messageIndex]) {
+        newMessages[messageIndex] = {
+          ...newMessages[messageIndex],
+          formSubmitted: true,
+        }
+      }
+      return newMessages
+    })
+
+    // 入力データをLLM用のメッセージに整形
+    const costTypeNames: Record<string, string> = {
+      material_cost: '仕入れ・材料費',
+      labor_cost: '人件費',
+      energy_cost: '光熱費',
+      overhead: 'その他経費',
+    }
+
+    const costDetails: string[] = []
+    
+    // 売上
+    if (data.previous_sales || data.current_sales) {
+      costDetails.push(`- 月の売上: 以前 ${data.previous_sales || '未入力'}万円 → 現在 ${data.current_sales || '未入力'}万円`)
+    }
+    
+    // 各費目
+    const costFields = [
+      { prev: 'material_cost_previous', curr: 'material_cost_current', name: '仕入れ・材料費' },
+      { prev: 'labor_cost_previous', curr: 'labor_cost_current', name: '人件費' },
+      { prev: 'energy_cost_previous', curr: 'energy_cost_current', name: '光熱費' },
+      { prev: 'overhead_previous', curr: 'overhead_current', name: 'その他経費' },
+    ]
+    
+    for (const field of costFields) {
+      if (data[field.prev] || data[field.curr]) {
+        costDetails.push(`- ${field.name}: 以前 ${data[field.prev] || '未入力'}万円 → 現在 ${data[field.curr] || '未入力'}万円`)
+      }
+    }
+
+    // LLMに送信するメッセージ
+    const agentRequest = `【原価情報の入力結果】
+以下のコスト情報を基に、価格転嫁の分析と松竹梅（理想・妥当・最低防衛ライン）の値上げ率を計算してください。
+
+${costDetails.join('\n')}
+
+※ 未入力の項目は業界平均で推計してください。
+※ 松竹梅の3パターンで値上げ率と利益率を提示してください。
+※ 推奨シナリオと次のアクションも提案してください。`
+
+    // LLMに送信（ユーザーメッセージは表示しない）
+    setTimeout(() => {
+      handleSend(agentRequest, true)
+    }, 300)
+  }
+
+  // チャット内フォームのスキップ処理
+  const handleInlineCostFormSkip = (messageIndex: number) => {
+    // フォームを送信済みに更新（スキップ表示に変更）
+    setMessages(prev => {
+      const newMessages = [...prev]
+      if (newMessages[messageIndex]) {
+        newMessages[messageIndex] = {
+          ...newMessages[messageIndex],
+          content: '原価計算をスキップしました。後からいつでも「原価計算をしたい」と言っていただければ、再度フォームを表示できます。',
+          inlineFormType: undefined,
+        }
+      }
+      return newMessages
+    })
+  }
+
   // 汎用ツールモーダルの送信処理
   const handleToolModalSubmit = async (data: Record<string, number | string>) => {
     if (!activeModalType) return
@@ -633,21 +770,22 @@ ${resultText}`
       // ウェルカムメッセージを再表示
       const welcomeMessage: Message = {
         role: 'assistant',
-        content: `こんにちは！価格転嫁支援AIアシスタントです。
+        content: `こんにちは！中小企業経営サポートAIです。
 
-皆様の価格転嫁をサポートさせていただきます。
+資金繰り、人材、販路拡大、価格交渉、事業承継…
+経営のお悩み、どんなことでも気軽にご相談ください。
 
 **できること:**
-価格転嫁プロセス（準備編・実践編）の各ステップについてアドバイス
-原価計算や見積書作成などの具体的な手順の説明
-業界動向や事例の検索
-データの可視化（グラフ作成）
+- 経営全般のご相談（資金繰り、人材、販路拡大など）
+- 価格交渉・値上げ交渉の専門サポート
+- 市場データ分析、コスト試算、交渉資料作成
+- 業界動向の検索とデータ可視化
 
 **使い方:**
 お困りのことや知りたいことを、お気軽にご質問ください。
-例: 「原価計算のやり方を教えて」「見積書の作り方は？」「業界の価格転嫁動向を知りたい」
+例: 「資金繰りで困っている」「値上げ交渉の準備をしたい」「業界の動向を知りたい」
 
-どのようなことでお手伝いできますか？`
+今日はどんなことでお困りですか？`
       }
       setMessages([welcomeMessage])
     } catch (error) {
@@ -799,7 +937,7 @@ ${resultText}`
       )}
 
       <header className="app-header">
-        <h1>中小企業サポートAI</h1>
+        <h1>中小企業経営サポートAI</h1>
         <div className="header-controls">
           {currentMode && (
             <div className={`mode-badge ${currentMode}`}>
@@ -818,6 +956,10 @@ ${resultText}`
             // 最後のメッセージがアシスタントで、かつローディング中の場合、カーソルを表示
             const isLastMessage = idx === messages.length - 1
             const isAssistantLoading = isLastMessage && msg.role === 'assistant' && isLoading
+            
+            // メッセージ内からグラフURLを抽出（重複を除去）
+            const chartUrlMatches = msg.content.match(/\[CHART_URL\](.*?)\[\/CHART_URL\]/g) || []
+            const chartUrls = [...new Set(chartUrlMatches.map(m => m.replace(/\[CHART_URL\]|\[\/CHART_URL\]/g, '').trim()))]
             
             // メッセージ内からPDFファイル名を抽出
             const pdfFileMatches = msg.content.match(/\[PDF_FILE\](.*?)\[\/PDF_FILE\]/g) || []
@@ -842,13 +984,20 @@ ${resultText}`
               msg.content.includes('generate_document')
             
             // 表示用にタグを除去したコンテンツ
-            const displayContent = msg.content.replace(/\[PDF_FILE\].*?\[\/PDF_FILE\]/g, '').trim()
+            let displayContent = msg.content
+              .replace(/\[PDF_FILE\].*?\[\/PDF_FILE\]/g, '')
+              .replace(/\[CHART_URL\].*?\[\/CHART_URL\]/g, '')
+              .trim()
             
             return (
               <div key={idx}>
                 <div className={`message ${msg.role}`}>
                   <div className="message-content">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayContent}</ReactMarkdown>
+                    {msg.role === 'user' ? (
+                      <div style={{ whiteSpace: 'pre-wrap' }}>{displayContent}</div>
+                    ) : (
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayContent}</ReactMarkdown>
+                    )}
                     {isAssistantLoading && currentStatus && (
                       <div className="status-message">
                         {currentStatus}
@@ -858,7 +1007,44 @@ ${resultText}`
                     {isAssistantLoading && !currentStatus && currentResponseRef.current.trim() && (
                       <span className="cursor">▌</span>
                     )}
-                    {/* このメッセージに紐づく画像を表示 */}
+                    {/* チャット内フォーム */}
+                    {msg.inlineFormType === 'cost_form' && (
+                      <InlineCostForm
+                        onSubmit={(data) => handleInlineCostFormSubmit(data, idx)}
+                        onSkip={() => handleInlineCostFormSkip(idx)}
+                        isLoading={isModalLoading}
+                        isSubmitted={msg.formSubmitted}
+                      />
+                    )}
+                    {/* グラフ画像をURLから表示 */}
+                    {chartUrls.length > 0 && (
+                      <div className="message-images" style={{ marginTop: '16px' }}>
+                        {chartUrls.map((chartUrl, imgIdx) => (
+                          <div key={imgIdx} className="chart-image-container" style={{
+                            backgroundColor: '#f8f9fa',
+                            borderRadius: '8px',
+                            padding: '12px',
+                            marginBottom: '12px'
+                          }}>
+                            <img
+                              src={`${API_BASE_URL}${chartUrl}`}
+                              alt={`生成されたグラフ ${imgIdx + 1}`}
+                              className="chart-image"
+                              style={{
+                                maxWidth: '100%',
+                                borderRadius: '4px',
+                                boxShadow: '0 2px 8px rgba(0,0,0,0.1)'
+                              }}
+                              onError={(e) => {
+                                console.error('画像読み込みエラー:', chartUrl)
+                                e.currentTarget.style.display = 'none'
+                              }}
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {/* このメッセージに紐づくBase64画像を表示（旧方式、互換性のため維持） */}
                     {msg.images && msg.images.length > 0 && (
                       <div className="message-images">
                         {msg.images.map((imgData, imgIdx) => (
@@ -956,41 +1142,6 @@ ${resultText}`
                             </a>
                           </div>
                         ))}
-                      </div>
-                    )}
-                    {/* 「PDFを生成しました」が含まれているが、ファイル名が検出できない場合 */}
-                    {hasPdfGenerated && pdfFilenames.length === 0 && !isAssistantLoading && (
-                      <div className="message-pdfs" style={{ marginTop: '12px' }}>
-                        <button
-                          onClick={async () => {
-                            try {
-                              const res = await axios.get(`${API_BASE_URL}/api/documents`)
-                              const docs = res.data.documents
-                              if (docs.length === 0) {
-                                alert('PDFが見つかりませんでした')
-                                return
-                              }
-                              // 最新のPDFをダウンロード
-                              const link = document.createElement('a')
-                              link.href = `${API_BASE_URL}/api/documents/${docs[0].filename}`
-                              link.download = docs[0].filename
-                              link.click()
-                            } catch (e) {
-                              alert('PDFの取得に失敗しました')
-                            }
-                          }}
-                          style={{
-                            padding: '8px 16px',
-                            backgroundColor: '#555',
-                            color: 'white',
-                            border: 'none',
-                            borderRadius: '4px',
-                            fontSize: '14px',
-                            cursor: 'pointer'
-                          }}
-                        >
-                          PDFをダウンロード
-                        </button>
                       </div>
                     )}
                   </div>

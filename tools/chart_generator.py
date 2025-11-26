@@ -1,23 +1,30 @@
 """グラフ生成ツール（generate_chart）
 
 データを可視化し、交渉の場で即座に使える高品質グラフを生成。
-Base64形式で画像データを返す（ファイル保存なし）。
+ローカルにファイル保存し、パスをUI側に返す。
 """
 import io
 import base64
 import json
+import os
+from datetime import datetime
 from typing import List, Optional, Dict, Any
 from strands import tool
 
+# グローバル変数: 生成されたグラフファイルのパスを追跡
+# api/main.py がストリーミング終了時にこれを読み込んで確実に送信する
+LAST_GENERATED_CHARTS: List[str] = []
 
-def _generate_chart_base64(
+
+def _generate_chart_file(
     data: Dict[str, Any],
     chart_type: str,
     title: str,
     x_label: str = "",
-    y_label: str = ""
-) -> str:
-    """グラフを生成してBase64エンコードした画像データを返す"""
+    y_label: str = "",
+    output_dir: str = "outputs/charts"
+) -> tuple[str, str]:
+    """グラフを生成してファイルに保存し、ファイルパスとBase64データを返す"""
     import matplotlib
     matplotlib.use('Agg')
     
@@ -79,7 +86,7 @@ def _generate_chart_base64(
         # 棒グラフ
         labels = data.get('labels', ['項目1', '項目2', '項目3'])
         values = data.get('values', [100, 200, 150])
-        
+
         # 複数系列対応
         if 'series' in data:
             series = data['series']
@@ -87,50 +94,62 @@ def _generate_chart_base64(
             x = range(len(labels))
             width = 0.8 / len(series)
             colors = ['#2563eb', '#dc2626', '#16a34a', '#f59e0b', '#8b5cf6']
-            
+
             for i, (name, vals) in enumerate(series.items()):
                 offset = (i - len(series)/2 + 0.5) * width
                 bars = ax.bar([xi + offset for xi in x], vals, width, label=name, color=colors[i % len(colors)])
-                
+
                 for bar, val in zip(bars, vals):
                     label = f'{val:,.0f}' if isinstance(val, (int, float)) else str(val)
                     ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(vals)*0.01,
                             label, ha='center', va='bottom', fontsize=8, fontweight='bold')
-            
+
             ax.set_xticks(list(x))
             ax.set_xticklabels(labels, rotation=45, ha='right')
             ax.legend()
         else:
             fig, ax = plt.subplots(figsize=(10, 6))
             main_color = '#2563eb'
-            
+
             bars = ax.bar(labels, values, color=main_color, edgecolor='white', linewidth=1.5)
-            
+
             for bar, val in zip(bars, values):
                 label = f'{val:,.0f}' if isinstance(val, (int, float)) else str(val)
                 ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + max(values)*0.01,
                         label, ha='center', va='bottom', fontsize=9, fontweight='bold')
-        
+
         ax.set_xlabel(x_label, fontsize=12, fontweight='bold')
         ax.set_ylabel(y_label, fontsize=12, fontweight='bold')
         ax.set_title(title, fontsize=14, fontweight='bold', pad=15)
         ax.grid(axis='y', alpha=0.3, linestyle='--')
-        
+
         plt.xticks(rotation=45, ha='right')
     else:
         # デフォルト（折れ線グラフ）
-        return _generate_chart_base64(data, "line", title, x_label, y_label)
-    
+        return _generate_chart_file(data, "line", title, x_label, y_label, output_dir)
+
     plt.tight_layout()
-    
-    # Base64エンコード
+
+    # 出力ディレクトリを作成
+    os.makedirs(output_dir, exist_ok=True)
+
+    # ファイル名を生成（タイムスタンプ付き）
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    safe_title = "".join(c if c.isalnum() or c in (' ', '_', '-') else '_' for c in title)
+    filename = f"chart_{safe_title}_{timestamp}.png"
+    filepath = os.path.join(output_dir, filename)
+
+    # ファイルに保存
+    plt.savefig(filepath, format='png', dpi=150, bbox_inches='tight', facecolor='white', edgecolor='none')
+
+    # Base64エンコード（UI表示用）
     buf = io.BytesIO()
     plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', facecolor='white', edgecolor='none')
     buf.seek(0)
     image_base64 = base64.b64encode(buf.read()).decode('utf-8')
     plt.close(fig)
-    
-    return image_base64
+
+    return filepath, image_base64
 
 
 @tool
@@ -163,7 +182,7 @@ def generate_chart(
     - data形式: {"labels": ["製造業", "小売業", "建設業"], "values": [100, 200, 150]}
 
     Returns:
-        str: 生成結果のメッセージ（Base64画像データを含む特殊フォーマット）
+        str: 生成結果のメッセージ（ファイルパスとBase64画像データを含む特殊フォーマット）
     """
     try:
         print(f"\n{'='*60}")
@@ -171,27 +190,33 @@ def generate_chart(
         print(f"   タイプ: {chart_type}")
         print(f"   タイトル: {title}")
         print(f"{'='*60}\n")
-        
-        # グラフを生成してBase64エンコード
-        image_base64 = _generate_chart_base64(
+
+        # グラフを生成してファイル保存 + Base64エンコード
+        filepath, image_base64 = _generate_chart_file(
             data=data,
             chart_type=chart_type,
             title=title,
             x_label=x_label,
             y_label=y_label
         )
-        
+
         print(f"✅ グラフ生成成功")
-        print(f"   Base64データサイズ: {len(image_base64)} 文字")
+        print(f"   保存先: {filepath}")
+
+        # ファイル名を抽出（URLとして使用）
+        filename = os.path.basename(filepath)
+        chart_url = f"/charts/{filename}"
         
-        # 特殊フォーマットで返す（バックエンドで解析される）
+        print(f"   📌 画像URL: {chart_url}")
+
+        # 特殊フォーマットで返す（URLタグを使用）
         return f"""✅ グラフを生成しました
 
 **タイトル**: {title}
 **グラフタイプ**: {chart_type}
 
-[CHART_IMAGE]{image_base64}[/CHART_IMAGE]"""
-        
+[CHART_URL]{chart_url}[/CHART_URL]"""
+
     except Exception as e:
         print(f"❌ エラー: {str(e)}")
         import traceback
