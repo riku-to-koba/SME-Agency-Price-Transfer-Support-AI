@@ -430,7 +430,7 @@ def _save_as_professional_pdf(
         raise ImportError("reportlab is not installed. Please install it with: pip install reportlab")
 
     # 保存ディレクトリ
-    docs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "documents")
+    docs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "outputs", "documents")
     os.makedirs(docs_dir, exist_ok=True)
 
     # ファイル名をサニタイズ

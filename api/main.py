@@ -404,14 +404,14 @@ async def chat_endpoint(request: ChatMessage):
         # initial thinking signal
         yield f"data: {json.dumps({'type': 'status', 'status': 'thinking', 'message': '思考中...'}, ensure_ascii=False)}\n\n"
 
-            try:
-                async for event in orchestrator.stream(session, request.message):
-                    # 任意のイベントから画像を再帰的に抽出
-                    event_images = extract_images_from_event(event)
-                    for img in event_images:
-                        if img not in sent_images:
-                            sent_images.append(img)
-                            yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
+        try:
+            async for event in orchestrator.stream(session, request.message):
+                # 任意のイベントから画像を再帰的に抽出
+                event_images = extract_images_from_event(event)
+                for img in event_images:
+                    if img not in sent_images:
+                        sent_images.append(img)
+                        yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
 
                 # PDFファイルを抽出（イベント全体を文字列化して検索）
                 event_str = json.dumps(event, ensure_ascii=False, default=str) if isinstance(event, dict) else str(event)
@@ -420,7 +420,7 @@ async def chat_endpoint(request: ChatMessage):
                     if filename not in sent_pdf_filenames:
                         sent_pdf_filenames.add(filename)
                         yield f"data: {json.dumps({'type': 'pdf', 'data': pdf_base64}, ensure_ascii=False)}\n\n"
-                
+
                 # mode updates
                 if event.get("type") == "mode_update":
                     yield f"data: {json.dumps({'type': 'mode_update', 'mode': event['mode']}, ensure_ascii=False)}\n\n"
@@ -431,7 +431,7 @@ async def chat_endpoint(request: ChatMessage):
                     tool_name = event["current_tool_use"]["name"]
                     tool_name_ja = TOOL_NAME_JA.get(tool_name, tool_name)
                     status_message = f"{tool_name_ja}を実行中..."
-                    
+
                     # モーダル表示が必要なツールかチェック
                     if tool_name in TOOLS_REQUIRING_MODAL:
                         modal_type = TOOLS_REQUIRING_MODAL[tool_name]
@@ -486,7 +486,7 @@ async def chat_endpoint(request: ChatMessage):
                         if img not in sent_images:
                             sent_images.append(img)
                             yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
-                    
+
                     # ファイルパスから画像を読み込む（フォールバック）
                     _, file_images = extract_chart_image_from_path(tool_result_str)
                     for img in file_images:
@@ -512,7 +512,7 @@ async def chat_endpoint(request: ChatMessage):
                         if img not in sent_images:
                             sent_images.append(img)
                             yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
-                    
+
                     # ファイルパスからも画像を読み込む（フォールバック）
                     _, file_images = extract_chart_image_from_path(full_response)
                     for img in file_images:
@@ -520,12 +520,8 @@ async def chat_endpoint(request: ChatMessage):
                             sent_images.append(img)
                             yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
 
-                    # PDFファイルを抽出（ファイル名で重複チェック）
-                    _, pdf_files = extract_pdf_files(clean_text)
-                    for filename, pdf_base64 in pdf_files:
-                        if filename not in sent_pdf_filenames:
-                            sent_pdf_filenames.add(filename)
-                            yield f"data: {json.dumps({'type': 'pdf', 'data': pdf_base64}, ensure_ascii=False)}\n\n"
+                    # PDFファイルはtool_resultで既に送信済みのため、ここでは抽出しない
+                    # content chunkではPDFタグを表示用テキストとして保持
 
                     # 古いパターンのみ除去（PDF_FILEタグは保持）
                     display_response = re.sub(r'\[IMAGE_PATH:[^\]]*\]', '', clean_text).strip()
