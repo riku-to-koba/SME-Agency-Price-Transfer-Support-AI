@@ -1,386 +1,241 @@
-"""文書自動生成ツール（generate_document）
+"""汎用PDF生成ツール（generate_document）
 
-交渉に必要な「武器（書類）」を、数秒で、プロフェッショナルなクオリティで作成。
+任意の文書内容をPDF形式で出力する汎用ツール。
+LLMが作成した長文ドキュメントをそのままPDF化します。
 """
 import os
 import uuid
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Optional, List
 from strands import tool
 
+# 最後に生成されたPDFファイルのパスを保存（バックエンドから参照）
+LAST_GENERATED_PDFS: List[str] = []
+
+try:
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import mm
+    from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, PageBreak
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+    from reportlab.lib.enums import TA_LEFT, TA_CENTER
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
+    print("⚠️ Warning: reportlab not installed. PDF generation will be disabled.")
+
+
+def _save_as_pdf(content: str, title: str, document_type: str) -> str:
+    """文書内容をPDFとして保存"""
+    if not REPORTLAB_AVAILABLE:
+        raise ImportError("reportlab is not installed. Please install it with: pip install reportlab")
 
-# 文書テンプレート
-TEMPLATES = {
-    "request_letter": {
-        "formal": """
-拝啓
-
-時下ますますご清栄のこととお慶び申し上げます。
-平素は格別のお引き立てを賜り、厚く御礼申し上げます。
-
-さて、このたび弊社では、昨今の{cost_reason}を受け、誠に恐縮ながら価格改定のお願いを申し上げたく、ご連絡いたしました。
-
-【価格改定の背景】
-{reason}
-
-【改定内容】
-- 現行価格: {current_price}
-- 改定後価格: {new_price}
-- 改定率: {increase_rate}
-
-【改定実施予定日】
-{effective_date}
-
-弊社といたしましても、コスト削減努力を重ねておりますが、品質を維持しながら安定供給を継続するため、何卒ご理解とご協力を賜りますようお願い申し上げます。
-
-ご不明な点等ございましたら、担当者までお気軽にお問い合わせください。
-引き続きのご愛顧を賜りますよう、何卒よろしくお願い申し上げます。
-
-敬具
-""",
-        "friendly": """
-{client_name}様
-
-いつも大変お世話になっております。
-{company_name}の{contact_name}です。
-
-日頃より長年のお取引をいただき、心より感謝申し上げます。
-
-さて、大変恐縮ではございますが、価格改定についてご相談させていただきたく、ご連絡いたしました。
-
-【背景】
-{reason}
-
-【ご相談内容】
-- 現行: {current_price}
-- ご相談価格: {new_price}（{increase_rate}アップ）
-
-{client_name}様とは長いお付き合いをさせていただいておりますので、まずはご相談という形でお話しさせていただければと存じます。
-
-ご都合のよい日時がございましたら、お知らせいただけますと幸いです。
-
-何卒よろしくお願いいたします。
-""",
-        "assertive": """
-{client_name}様
-
-{company_name}でございます。
-
-このたび、価格改定について正式にお申し入れいたします。
-
-【改定理由】
-{reason}
-
-なお、参考までに申し添えますと、下請法では「発注者が一方的に、通常支払われる対価に比して著しく低い下請代金の額を定めること」は買いたたきとして禁止されております。
-
-【改定内容】
-- 現行価格: {current_price}
-- 改定後価格: {new_price}
-- 改定率: {increase_rate}
-- 実施日: {effective_date}
-
-貴社におかれましては、適正な取引の観点からご検討いただきますようお願い申し上げます。
-
-ご回答は{response_deadline}までにお願いいたします。
-""",
-        "urgent": """
-{client_name}様
-
-{company_name}でございます。
-
-誠に恐れ入りますが、緊急のお願いがございます。
-
-【現状】
-{reason}
-
-このままでは弊社の経営継続が困難な状況となっております。
-
-【お願い】
-- 現行価格: {current_price}
-- ご相談価格: {new_price}（{increase_rate}アップ）
-
-長年のお取引関係を維持させていただくためにも、何卒ご理解とご協力を賜りますよう、切にお願い申し上げます。
-
-早急にお打ち合わせの機会をいただければ幸いです。
-
-何卒よろしくお願い申し上げます。
-"""
-    },
-    "quotation": """
-御見積書
-
-{client_name}御中
-
-下記の通りお見積もり申し上げます。
-
-■ 見積日: {date}
-■ 見積番号: {quote_number}
-■ 有効期限: {valid_until}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【お見積り内容】
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-{items}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-小計: {subtotal}
-消費税（{tax_rate}%）: {tax}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-合計: {total}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-【備考】
-{notes}
-
-{company_name}
-{contact_info}
-""",
-    "cost_breakdown": """
-原価内訳書
-
-■ 対象製品/サービス: {product_name}
-■ 作成日: {date}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【コスト構成】
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-{cost_items}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-原価合計: {total_cost}
-目標利益（{profit_margin}%）: {target_profit}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-適正販売価格: {selling_price}
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-【コスト変動要因】
-{cost_factors}
-
-【補足】
-{notes}
-""",
-    "agreement": """
-合意書
-
-{company_name}（以下「甲」という）と{client_name}（以下「乙」という）は、
-以下の内容について合意する。
-
-■ 合意日: {date}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【合意内容】
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-第1条（価格改定）
-{price_terms}
-
-第2条（適用開始日）
-本合意に基づく価格改定は、{effective_date}より適用する。
-
-第3条（その他）
-{other_terms}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-上記内容に合意したことを証するため、本書2通を作成し、
-甲乙記名押印の上、各1通を保有する。
-
-甲: {company_name}
-   代表者: ___________________  印
-
-乙: {client_name}
-   代表者: ___________________  印
-""",
-    "negotiation_materials": """
-価格改定のご説明
-
-{company_name}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. 価格改定の背景
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-{background}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-2. コスト上昇の詳細
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-{cost_details}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-3. 価格改定のご提案
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-{proposal}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-4. 弊社の取り組み
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-{our_efforts}
-
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-5. 今後について
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-{future_plans}
-
-何卒ご理解とご協力を賜りますよう、お願い申し上げます。
-
-お問い合わせ先: {contact_info}
-"""
-}
-
-
-def _format_document(template: str, data: Dict[str, Any]) -> str:
-    """テンプレートにデータを埋め込んで文書を生成"""
-    result = template
-    
-    # デフォルト値を設定
-    defaults = {
-        "date": datetime.now().strftime("%Y年%m月%d日"),
-        "effective_date": "ご相談の上決定",
-        "response_deadline": "2週間以内",
-        "valid_until": (datetime.now().replace(day=1) + __import__('datetime').timedelta(days=32)).replace(day=1).strftime("%Y年%m月%d日"),
-        "quote_number": f"Q-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:4].upper()}",
-        "tax_rate": "10",
-        "cost_reason": "原材料費・エネルギー費の高騰",
-        "company_name": "（貴社名）",
-        "client_name": "（お取引先名）",
-        "contact_name": "（担当者名）",
-        "contact_info": "（連絡先）",
-    }
-    
-    # デフォルト値をマージ
-    merged_data = {**defaults, **data}
-    
-    # プレースホルダーを置換
-    for key, value in merged_data.items():
-        placeholder = "{" + key + "}"
-        if placeholder in result:
-            result = result.replace(placeholder, str(value) if value else "")
-    
-    return result
-
-
-def _save_document(content: str, document_type: str, title: str) -> str:
-    """文書をファイルとして保存"""
     # 保存ディレクトリ
     docs_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "documents")
     os.makedirs(docs_dir, exist_ok=True)
-    
+
     # ファイル名をサニタイズ
     safe_title = "".join(c for c in title if c.isalnum() or c in " -_").strip()[:30]
     if not safe_title:
         safe_title = document_type
-    
-    # テキストファイルとして保存
-    filename = f"{document_type}_{safe_title}_{uuid.uuid4().hex[:8]}.txt"
+
+    # PDFファイル名
+    filename = f"{document_type}_{safe_title}_{uuid.uuid4().hex[:8]}.pdf"
     filepath = os.path.join(docs_dir, filename)
-    
-    with open(filepath, 'w', encoding='utf-8') as f:
-        f.write(content)
-    
+
+    # PDF作成
+    doc = SimpleDocTemplate(
+        filepath,
+        pagesize=A4,
+        leftMargin=20*mm,
+        rightMargin=20*mm,
+        topMargin=20*mm,
+        bottomMargin=20*mm
+    )
+
+    # 日本語フォント設定を試みる
+    try:
+        # Windows標準フォント
+        font_paths = [
+            "C:/Windows/Fonts/msgothic.ttc",  # MSゴシック
+            "C:/Windows/Fonts/meiryo.ttc",     # メイリオ
+            "/System/Library/Fonts/ヒラギノ角ゴシック W3.ttc",  # Mac
+            "/usr/share/fonts/truetype/takao-gothic/TakaoPGothic.ttf",  # Linux
+        ]
+
+        font_registered = False
+        for font_path in font_paths:
+            if os.path.exists(font_path):
+                try:
+                    pdfmetrics.registerFont(TTFont('JapaneseFont', font_path))
+                    font_registered = True
+                    break
+                except:
+                    continue
+
+        if font_registered:
+            font_name = 'JapaneseFont'
+        else:
+            # フォールバック: Helvetica（日本語は文字化けする可能性あり）
+            font_name = 'Helvetica'
+            print("⚠️ Warning: Japanese font not found. Using Helvetica as fallback.")
+    except Exception as e:
+        font_name = 'Helvetica'
+        print(f"⚠️ Warning: Could not register Japanese font: {e}")
+
+    # スタイル設定
+    styles = getSampleStyleSheet()
+
+    # タイトルスタイル
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontName=font_name,
+        fontSize=16,
+        alignment=TA_CENTER,
+        spaceAfter=12,
+    )
+
+    # 本文スタイル
+    body_style = ParagraphStyle(
+        'CustomBody',
+        parent=styles['BodyText'],
+        fontName=font_name,
+        fontSize=10,
+        leading=14,
+        alignment=TA_LEFT,
+        spaceAfter=6,
+    )
+
+    # コンテンツを構築
+    story = []
+
+    # タイトル追加
+    story.append(Paragraph(title, title_style))
+    story.append(Spacer(1, 10*mm))
+
+    # 本文を段落ごとに分割してPDFに追加
+    paragraphs = content.split('\n')
+    for para in paragraphs:
+        if para.strip():
+            # HTMLエスケープ処理
+            para_escaped = para.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+            story.append(Paragraph(para_escaped, body_style))
+        else:
+            # 空行はスペーサーとして追加
+            story.append(Spacer(1, 3*mm))
+
+    # PDF生成
+    doc.build(story)
+
     return filepath
 
 
 @tool
 def generate_document(
-    document_type: str,
-    data: dict,
-    tone: str = "formal"
+    content: str,
+    title: str,
+    document_type: str = "general"
 ) -> str:
-    """ビジネス文書を自動生成します。
+    """任意の文書内容をPDF形式で生成します。
+
+    このツールはテンプレートを使用せず、LLMが作成した完成済みの文書内容を
+    そのままPDF化します。長文ドキュメントの生成に適しています。
 
     Args:
-        document_type: 文書タイプ
-            - "quotation": コスト費目別見積書
-            - "request_letter": 価格交渉申入書
-            - "negotiation_materials": 価格改定説明資料
-            - "agreement": 合意書
-            - "cost_breakdown": 原価内訳書
-        data: 文書に埋め込むデータ（会社名、金額、理由等）
-            - client_name: 取引先名
-            - company_name: 自社名
-            - current_price: 現行価格
-            - new_price: 改定後価格
-            - increase_rate: 改定率
-            - reason: 改定理由
-            - items: 見積項目（見積書の場合）
-            - その他、文書タイプに応じたデータ
-        tone: 文書のトーン（request_letterのみ有効）
-            - "formal": 正式な文書
-            - "friendly": 協調的な文体
-            - "assertive": 毅然とした文体
-            - "urgent": 切実な文体
+        content: PDF化する文書の完成済み内容（長文推奨）
+            LLMが作成した文書の本文をそのまま渡してください。
+            改行は段落の区切りとして解釈されます。
+        title: 文書のタイトル（PDFの表紙に表示されます）
+        document_type: 文書の種別（ファイル名の接頭辞として使用）
+            例: "report", "proposal", "analysis", "summary", "document" など
 
     Returns:
-        str: 生成された文書のプレビューと保存先
-    
+        str: 生成されたPDFファイルのパスと確認メッセージ
+
     使用例:
-    - 価格交渉の申入書: document_type="request_letter", tone="friendly"
-    - コスト費目別見積書: document_type="quotation"
-    - 交渉説明資料: document_type="negotiation_materials"
+    ```python
+    # LLMが作成した長文レポートをPDF化
+    generate_document(
+        content="第1章 はじめに\n\n本報告書では...(長文が続く)",
+        title="市場調査報告書",
+        document_type="report"
+    )
+
+    # 提案書をPDF化
+    generate_document(
+        content="ご提案内容\n\n貴社における...(提案内容)",
+        title="システム導入提案書",
+        document_type="proposal"
+    )
+    ```
+
+    注意:
+    - reportlab がインストールされている必要があります
+    - 日本語フォントは自動検出されます（Windows/Mac/Linux対応）
+    - 長文ドキュメントの生成を想定しています
     """
     try:
         print(f"\n{'='*60}")
-        print(f"📄 [generate_document] 文書生成開始")
-        print(f"   タイプ: {document_type}")
-        print(f"   トーン: {tone}")
+        print(f"📄 [generate_document] PDF生成開始")
+        print(f"   タイトル: {title}")
+        print(f"   文書種別: {document_type}")
+        print(f"   文字数: {len(content)}文字")
         print(f"{'='*60}\n")
-        
-        # テンプレートを取得
-        if document_type == "request_letter":
-            templates = TEMPLATES.get("request_letter", {})
-            template = templates.get(tone, templates.get("formal", ""))
-        else:
-            template = TEMPLATES.get(document_type, "")
-        
-        if not template:
-            return f"❌ サポートされていない文書タイプです: {document_type}\n\n対応タイプ: quotation, request_letter, negotiation_materials, agreement, cost_breakdown"
-        
-        # 文書を生成
-        content = _format_document(template, data)
-        
-        # タイトルを決定
-        title_map = {
-            "quotation": "見積書",
-            "request_letter": "価格改定申入書",
-            "negotiation_materials": "価格改定説明資料",
-            "agreement": "合意書",
-            "cost_breakdown": "原価内訳書",
-        }
-        title = title_map.get(document_type, document_type)
-        
-        # ファイルとして保存
-        filepath = _save_document(content, document_type, title)
-        
-        # プレビュー（最初の500文字）
-        preview = content[:500] + "..." if len(content) > 500 else content
-        
-        print(f"✅ 文書生成成功: {filepath}")
-        
-        return f"""✅ 文書を生成しました
 
-**文書タイプ**: {title}
-**トーン**: {tone}
-**保存先**: {os.path.basename(filepath)}
+        if not content or not content.strip():
+            return "❌ エラー: 文書内容（content）が空です。PDF化する内容を指定してください。"
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-【プレビュー】
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-{preview}
+        if not title or not title.strip():
+            return "❌ エラー: タイトル（title）が空です。文書のタイトルを指定してください。"
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        # PDFとして保存
+        filepath = _save_as_pdf(content, title, document_type)
 
-文書が生成されました。必要に応じて内容を編集してご利用ください。"""
-        
+        # 文字数情報
+        char_count = len(content)
+        line_count = content.count('\n') + 1
+
+        # ファイルサイズを取得
+        file_size = os.path.getsize(filepath)
+        filename = os.path.basename(filepath)
+
+        print(f"✅ PDF生成成功: {filepath}")
+        print(f"   ファイルサイズ: {file_size} bytes")
+
+        # グローバルリストにパスを追加（バックエンドから参照可能）
+        global LAST_GENERATED_PDFS
+        LAST_GENERATED_PDFS.append(filepath)
+        print(f"   グローバルリストに追加: {filepath}")
+
+        # ファイルパスをタグで返す（バックエンドがBase64変換してフロントエンドに送信）
+        return f"""✅ PDFを生成しました
+
+**タイトル**: {title}
+**文書種別**: {document_type}
+**文字数**: {char_count}文字
+**行数**: {line_count}行
+**ファイルサイズ**: {file_size:,} bytes
+
+[PDF_FILE]{filename}[/PDF_FILE]
+
+PDFファイルが正常に生成されました。ダウンロードボタンからダウンロードできます。"""
+
+    except ImportError as e:
+        print(f"❌ エラー: {str(e)}")
+        return f"""❌ エラー: reportlab がインストールされていません
+
+PDFを生成するには以下のコマンドを実行してください:
+```
+pip install reportlab
+```
+
+エラー詳細: {str(e)}"""
+
     except Exception as e:
         print(f"❌ エラー: {str(e)}")
         import traceback
         traceback.print_exc()
-        return f"❌ 文書生成中にエラーが発生しました: {str(e)}"
+        return f"❌ PDF生成中にエラーが発生しました: {str(e)}"
 

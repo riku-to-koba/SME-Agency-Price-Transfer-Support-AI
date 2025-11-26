@@ -525,8 +525,7 @@
                     <h3>💼 Mode 2 Agent（子エージェント）</h3>
                     <h4 style="font-size: 1.1em; margin-top: 12px; margin-bottom: 8px;">価格転嫁専門エージェント</h4>
                     <p style="margin-top: 15px; font-size: 1em; line-height: 1.8;">
-                        価格交渉に特化した専門家エージェント。6つの専門ツールを直接使用して、準備から実践まで徹底サポート。<br>
-                        14ステップ（CHECK 1-9 → STEP 1-5）は<strong>参考ガイドライン</strong>として提供（順番の強制なし）。
+                        価格交渉に特化した専門家エージェント。6つの専門ツールを直接使用して、準備から実践まで徹底サポート。
                     </p>
                     <div style="margin-top: 20px; padding: 20px; background: rgba(255,255,255,0.15); border-radius: 12px; border-left: 4px solid #ffd700;">
                         <div style="font-weight: 700; font-size: 1.1em; margin-bottom: 10px;">🔄 Mode 2 Agentの動作</div>
@@ -538,125 +537,15 @@
                         </ol>
                     </div>
                     <p style="margin-top: 15px; font-size: 0.9em; opacity: 0.9; font-style: italic;">
-                        例：「取引先の財務状況を知りたい」→ LLMがcompany_researchツールを直接呼び出し
+                        例：「取引先の財務状況を知りたい」→ LLMがweb_searchツールを直接呼び出し
                     </p>
-                </div>
-            </div>
-        </div>
-
-        <!-- 準備編 CHECK 1-9 -->
-        <div class="flow-section">
-            <div class="section-title">🟢 参考ガイドライン - 準備編: CHECK 1-9（外堀を埋める）</div>
-            <div class="steps-grid">
-                <div class="step-card check" onclick="showModal('check1')">
-                    <div class="step-number">CHECK 1</div>
-                    <div class="step-title">取引条件・業務内容の確認</div>
-                    <div class="step-purpose">契約の曖昧さを排除</div>
-                    <div class="step-tools">document_generator</div>
-                </div>
-
-                <div class="step-card check" onclick="showModal('check2')">
-                    <div class="step-number">CHECK 2</div>
-                    <div class="step-title">データの証拠化</div>
-                    <div class="step-purpose">客観的データに変換</div>
-                    <div class="step-tools">web_search, generate_chart</div>
-                </div>
-
-                <div class="step-card check" onclick="showModal('check3')">
-                    <div class="step-number">CHECK 3</div>
-                    <div class="step-title">精緻な原価計算</div>
-                    <div class="step-purpose">正確なコスト構造を把握</div>
-                    <div class="step-tools">calculate_cost_impact, search_knowledge_base</div>
-                </div>
-
-                <div class="step-card check" onclick="showModal('check4')">
-                    <div class="step-number">CHECK 4</div>
-                    <div class="step-title">戦略的単価表の作成</div>
-                    <div class="step-purpose">自社定価を標準化</div>
-                    <div class="step-tools">document_generator</div>
-                </div>
-
-                <div class="step-card check" onclick="showModal('check5')">
-                    <div class="step-number">CHECK 5</div>
-                    <div class="step-title">見積書フォーマット刷新</div>
-                    <div class="step-purpose">価格転嫁の透明性確保</div>
-                    <div class="step-tools">document_generator</div>
-                </div>
-
-                <div class="step-card check" onclick="showModal('check6')">
-                    <div class="step-number">CHECK 6</div>
-                    <div class="step-title">取引先の経営分析</div>
-                    <div class="step-purpose">支払い能力と攻め筋を把握</div>
-                    <div class="step-tools">web_search</div>
-                </div>
-
-                <div class="step-card check" onclick="showModal('check7')">
-                    <div class="step-number">CHECK 7</div>
-                    <div class="step-title">代替不可能性の言語化</div>
-                    <div class="step-purpose">自社の強みを再定義</div>
-                    <div class="step-tools">LLM + simulate_negotiation</div>
-                </div>
-
-                <div class="step-card check" onclick="showModal('check8')">
-                    <div class="step-number">CHECK 8</div>
-                    <div class="step-title">法令違反リスクチェック</div>
-                    <div class="step-purpose">下請法違反の可能性を認識</div>
-                    <div class="step-tools">search_knowledge_base</div>
-                </div>
-
-                <div class="step-card check" onclick="showModal('check9')">
-                    <div class="step-number">CHECK 9</div>
-                    <div class="step-title">必達目標額の決定</div>
-                    <div class="step-purpose">最低・希望転嫁額を明確化</div>
-                    <div class="step-tools">calculate_cost_impact</div>
-                </div>
-            </div>
-        </div>
-
-        <!-- 実践編 STEP 1-5 -->
-        <div class="flow-section">
-            <div class="section-title">🟠 参考ガイドライン - 実践編: STEP 1-5（実際に動く）</div>
-            <div class="steps-grid">
-                <div class="step-card step" onclick="showModal('step1')">
-                    <div class="step-number">STEP 1</div>
-                    <div class="step-title">外堀を埋める</div>
-                    <div class="step-purpose">業界・世論の空気作り</div>
-                    <div class="step-tools">web_search, generate_chart</div>
-                </div>
-
-                <div class="step-card step" onclick="showModal('step2')">
-                    <div class="step-number">STEP 2</div>
-                    <div class="step-title">ターゲット選定</div>
-                    <div class="step-purpose">勝率の高い相手から攻略</div>
-                    <div class="step-tools">web_search, calculate_cost_impact</div>
-                </div>
-
-                <div class="step-card step" onclick="showModal('step3')">
-                    <div class="step-number">STEP 3</div>
-                    <div class="step-title">交渉の申し入れ</div>
-                    <div class="step-purpose">決裁権者との商談時間確保</div>
-                    <div class="step-tools">generate_document</div>
-                </div>
-
-                <div class="step-card step" onclick="showModal('step4')">
-                    <div class="step-number">STEP 4</div>
-                    <div class="step-title">交渉本番</div>
-                    <div class="step-purpose">納得ずくで値上げを承諾させる</div>
-                    <div class="step-tools">simulate_negotiation, generate_document</div>
-                </div>
-
-                <div class="step-card step" onclick="showModal('step5')">
-                    <div class="step-number">STEP 5</div>
-                    <div class="step-title">アフターフォロー</div>
-                    <div class="step-purpose">合意を契約書に落とし込む</div>
-                    <div class="step-tools">generate_document</div>
                 </div>
             </div>
         </div>
 
         <!-- 6つの専門ツール -->
         <div class="tools-section">
-            <div class="section-title">🛠️ 6つの専門ツール（最小公倍数設計）</div>
+            <div class="section-title">🛠️ 6つの専門ツール</div>
             <p style="text-align: center; color: #666; margin-bottom: 32px; font-size: 0.95em;">
                 各ツールは単一の責務を持ち、LLMが判断・解釈を担当。組み合わせで高度な機能を実現
             </p>
@@ -669,18 +558,18 @@
                         あらゆる外部情報取得の基盤。市場データ、企業情報、業界ニュースを検索し、構造化された結果を返す。<br>
                         <strong>LLMの役割</strong>：検索結果から数値データを抽出・分析し、企業をランク付け（S/A/B/C）、交渉戦略を提案。
                     </div>
-                    <div class="tool-tech">使用タイミング: CHECK 2（市場データ）, CHECK 6（取引先調査）, STEP 1（業界動向）<br>Tech: Web Search API</div>
+                    <div class="tool-tech">Tech: Tavily API（AI信頼性判定付き）</div>
                 </div>
 
                 <div class="tool-card tool-2" onclick="showModal('tool2')">
                     <div class="tool-icon">⚖️</div>
                     <div class="tool-name">search_knowledge_base</div>
                     <div class="tool-desc">
-                        <strong>法務知識検索ツール</strong><br>
+                        <strong>知識検索ツール</strong><br>
                         RAGで下請法、独禁法、価格転嫁ガイドライン、計算式を検索し、法的根拠を取得。<br>
                         <strong>LLMの役割</strong>：取得した条文をユーザーの状況に適用し、違法性を判定、対抗話法を生成。
                     </div>
-                    <div class="tool-tech">使用タイミング: CHECK 3（計算式参照）, CHECK 8（法令違反チェック）, 随時<br>Tech: RAG (S3 + Vector Search), FAISS/Pinecone</div>
+                    <div class="tool-tech">Tech: AWS Bedrock Knowledge Base（セマンティック検索）</div>
                 </div>
 
                 <div class="tool-card tool-3" onclick="showModal('tool3')">
@@ -691,7 +580,7 @@
                         複雑な数値計算・シミュレーションを実行し、松竹梅プランを自動生成。<br>
                         <strong>LLMの役割</strong>：計算結果を解釈・説明し、どのシナリオを推奨すべきかを判断。
                     </div>
-                    <div class="tool-tech">使用タイミング: CHECK 3, CHECK 9（最重要）<br>Tech: NumPy, Pandas, Excel出力</div>
+                    <div class="tool-tech">Tech: Python計算ロジック</div>
                 </div>
 
                 <div class="tool-card tool-4" onclick="showModal('tool4')">
@@ -702,7 +591,7 @@
                         データを受け取りグラフ画像を生成し、S3に保存してURLを返す。<br>
                         <strong>LLMの役割</strong>：web_searchやcalculate_cost_impactの結果からデータを抽出し、適切なグラフタイプを選択、解釈。
                     </div>
-                    <div class="tool-tech">使用タイミング: CHECK 2（市場データ）, CHECK 9（コスト試算）, STEP 1（交渉資料）<br>Tech: Matplotlib, Seaborn, S3</div>
+                    <div class="tool-tech">Tech: Matplotlib</div>
                 </div>
 
                 <div class="tool-card tool-5" onclick="showModal('tool5')">
@@ -713,7 +602,7 @@
                         テンプレート処理を実行し、PDF/Excel/Wordファイルを生成・S3保存。<br>
                         <strong>LLMの役割</strong>：文書の内容・論理構成を作成し、適切なトーンを判断、法的根拠の引用箇所を指定。
                     </div>
-                    <div class="tool-tech">使用タイミング: CHECK 1, 4, 5, STEP 3, 4, 5など（全ステップで活用）<br>Tech: Jinja2, python-docx, openpyxl, PDF</div>
+                    <div class="tool-tech">Tech: テンプレートエンジン</div>
                 </div>
 
                 <div class="tool-card tool-6" onclick="showModal('tool6')">
@@ -724,7 +613,7 @@
                         相手役のペルソナを管理し、スコアリング機能を提供。<br>
                         <strong>LLMの役割</strong>：ペルソナに応じた相手役の発言を生成し、ユーザーの交渉戦略を評価・改善提案。
                     </div>
-                    <div class="tool-tech">使用タイミング: CHECK 7（強みの言語化後）, STEP 4（交渉本番前）<br>Tech: LLM (Multi-turn), スコアリングエンジン</div>
+                    <div class="tool-tech">Tech: ペルソナ別ロジック, スコアリング</div>
                 </div>
             </div>
         </div>
@@ -737,7 +626,7 @@
                 <div class="external-card">
                     <div class="external-title">🔍 Web Search API</div>
                     <div class="external-desc">
-                        Google/Bing/Perplexity等を使用<br><br>
+                        <strong>Tavily API使用（AI信頼性判定付き）</strong><br><br>
                         ✓ 市場データ検索（企業物価指数、最低賃金）<br>
                         ✓ 企業情報検索（決算短信、宣言）<br>
                         ✓ ニュース検索（業界動向、IR情報）<br>
@@ -748,7 +637,7 @@
                 <div class="external-card">
                     <div class="external-title">📚 RAG Service</div>
                     <div class="external-desc">
-                        S3 + Vector Search<br><br>
+                        <strong>AWS Bedrock Knowledge Base使用</strong><br><br>
                         ✓ 下請法全文<br>
                         ✓ 独占禁止法<br>
                         ✓ 価格転嫁ハンドブック<br>
@@ -758,30 +647,9 @@
                     </div>
                 </div>
 
-                <div class="external-card">
-                    <div class="external-title">💾 S3 Storage</div>
-                    <div class="external-desc">
-                        セッション単位で管理<br><br>
-                        ✓ 生成グラフ画像（PNG/SVG）<br>
-                        ✓ 生成文書（PDF/Word/Excel）<br>
-                        ✓ 会話履歴（24時間自動削除）<br>
-                        ✓ アップロードファイル（見積書等）
-                    </div>
-                </div>
             </div>
         </div>
 
-        <!-- 凡例 -->
-        <div class="legend">
-            <div class="legend-item">
-                <div class="legend-color" style="background: #10b981;"></div>
-                <span>準備編 CHECK</span>
-            </div>
-            <div class="legend-item">
-                <div class="legend-color" style="background: #f59e0b;"></div>
-                <span>実践編 STEP</span>
-            </div>
-        </div>
     </div>
 
     <!-- モーダル -->
@@ -794,104 +662,6 @@
 
     <script>
         const modalData = {
-            check1: {
-                title: "CHECK 1: 取引条件・業務内容の確認",
-                purpose: "契約の曖昧さを排除し、追加請求できる状態にする",
-                details: "現在の取引条件を明確化し、「言った言わない」を防ぎます。業務範囲を可視化することで、追加作業に対する正当な請求根拠を作ります。",
-                tools: "📄 document_generator: 業務フロー図作成、見積チェックリスト生成",
-                usecase: "<strong>💬 ユースケース</strong><br>ユーザー：「取引先から『これも含まれてるよね？』と言われて、追加作業を無償でやらされることが多いんです」<br><br>AI：document_generatorを直接呼び出し<br>→ 現在の契約内容をヒアリングし、業務フロー図を自動作成<br>→ 「契約範囲内」と「追加作業」を明確に区分した見積チェックリストを生成<br>→ 今後は追加作業に対して正当に請求できる体制が整う"
-            },
-            check2: {
-                title: "CHECK 2: 原材料費・労務費データの証拠化",
-                purpose: "「なんとなく上がった」を「客観的データ」に変換",
-                details: "政府統計（e-Stat、日銀、厚労省）から公式データを取得し、価格推移グラフを生成。「感覚」ではなく「事実」で交渉します。",
-                tools: "🔍 web_search: 企業物価指数取得、最低賃金データ取得<br>📊 generate_chart: 価格推移グラフ生成",
-                usecase: "<strong>💬 ユースケース</strong><br>ユーザー：「ステンレスの価格が上がってるから値上げしたいんだけど、どう説明すればいいかな」<br><br>AI（LLM）：web_searchを呼び出し<br>→ e-Statから企業物価指数（ステンレス）の過去3年分のデータを自動取得<br>→ LLMが検索結果から数値データを抽出（2021年比+35%上昇）<br>→ generate_chartを呼び出して価格推移グラフを生成<br>→ 「政府統計で証明された客観的事実」として交渉資料が完成"
-            },
-            check3: {
-                title: "CHECK 3: 精緻な原価計算の実施",
-                purpose: "製品1個あたりの正確なコスト構造を把握",
-                details: "変動費・固定費を分類し、製品別の正確な原価を算出。赤字製品を特定し、適正価格を数値で示します。",
-                tools: "⚖️ search_knowledge_base: 原価計算手法のレクチャー（業種別モデル提示）<br>💰 calculate_cost_impact: 変動費・固定費の分類、配賦計算、製品別原価算出",
-                usecase: "<strong>💬 ユースケース</strong><br>ユーザー：「正直、製品ごとの原価がよくわかってないんだよね...」<br><br>AI（LLM）：search_knowledge_baseで原価計算手法を参照しつつ対話<br>→ 対話形式で原材料費、労務費、経費をヒアリング<br>→ calculate_cost_impactを呼び出して変動費・固定費を自動分類し、製品A/B/Cそれぞれの原価を算出<br>→ LLMが結果を解釈「製品Bは実は赤字だった」という事実が判明し、優先的に値上げすべき製品が明確に"
-            },
-            check4: {
-                title: "CHECK 4: 戦略的単価表の作成",
-                purpose: "標準化された「自社定価」を持つ",
-                details: "部品別・工程別・スキルレベル別の標準単価表を作成。値引き交渉ではなく、「定価からの調整」という立場を確立します。",
-                tools: "📄 generate_document: 部品別・工程別・スキルレベル別の標準単価表フォーマット生成",
-                usecase: "<strong>💬 ユースケース</strong><br>ユーザー：「毎回、相手の言い値で決まってしまって...」<br><br>AI（LLM）：原価データをヒアリングし、適正利益率を算出<br>→ generate_documentを呼び出して標準単価表を自動生成<br>→ 部品A: 5,000円、工程B: 8,000円/時間、といった「自社定価」が確立<br>→ 今後は「定価から10%引き」という交渉スタイルに転換可能"
-            },
-            check5: {
-                title: "CHECK 5: 「中身の見える」見積書フォーマットへの刷新",
-                purpose: "コスト費目を明記し、価格転嫁の透明性を確保",
-                details: "中小企業庁ハンドブック準拠の見積書様式を採用。原材料費・労務費・経費を明記し、値上げの正当性を可視化します。",
-                tools: "📄 generate_document: コスト費目別見積書（中小企業庁ハンドブック準拠様式）",
-                usecase: "<strong>💬 ユースケース</strong><br>ユーザー：「見積書に『一式 50万円』としか書いてなくて、値上げの説明がしづらい」<br><br>AI（LLM）：コスト構造を分析<br>→ generate_documentを呼び出して中小企業庁ハンドブック準拠の「コスト費目別見積書」フォーマットを生成<br>→ 原材料費: 20万円、労務費: 25万円、経費: 5万円、と内訳を明記<br>→ 「原材料費が3万円上がったので、合計53万円になります」と透明性のある説明が可能に"
-            },
-            check6: {
-                title: "CHECK 6: 敵を知る（取引先の経営分析）",
-                purpose: "相手の「支払い能力」と「建前」を把握し、攻め筋を決める",
-                details: "決算情報、パートナーシップ構築宣言、CSR方針を分析。増収増益なら強気、赤字なら段階的など、相手に応じた戦略を立案します。",
-                tools: "🔍 web_search: 決算情報取得、パートナーシップ構築宣言確認、CSR方針分析、ニュース収集",
-                usecase: "<strong>💬 ユースケース</strong><br>ユーザー：「A社とB社、どちらから交渉すべきか迷ってる」<br><br>AI（LLM）：web_searchを呼び出して各社の情報を収集<br>→ LLMが財務状況を分析し、ランク付け<br>→ A社: 増収増益、パートナーシップ宣言済み → Sランク（成功率90%）<br>→ B社: 減収減益、宣言なし → Cランク（成功率30%）<br>→ 「A社から交渉し、成功事例を作ってからB社に臨むべき」と戦略を提案"
-            },
-            check7: {
-                title: "CHECK 7: 自社の「代替不可能性」の言語化",
-                purpose: "「あなたじゃなきゃ困る」と思わせる強みを再定義",
-                details: "SWOT分析で自社の強みを客観視。技術力、納期対応力、品質など、他社に真似できない価値を明確化し、交渉カードにします。",
-                tools: "🎭 LLM（対話分析）+ simulate_negotiation: SWOT分析、強みの言語化、バーター条件生成、Value Proposition構築",
-                usecase: "<strong>💬 ユースケース</strong><br>ユーザー：「うちの強みって何だろう...他社でもできそうな気がして」<br><br>AI（LLM）：対話形式でSWOT分析を実施<br>→ 強み: 「48時間以内の緊急対応」「不良率0.1%の高品質」「20年の信頼関係」を抽出<br>→ LLMがValue Propositionを構築「他社に切り替えるとリードタイムが2週間かかり、品質リスクも高まる」<br>→ simulate_negotiationでこの強みを使った交渉シナリオを訓練"
-            },
-            check8: {
-                title: "CHECK 8: 法令違反（買いたたき）リスクのチェック",
-                purpose: "現在の取引が下請法違反の可能性があることを認識",
-                details: "下請法・独禁法に照らし合わせ、現在の取引条件が「買いたたき」に該当するかを判定。法的根拠を持って交渉に臨めます。",
-                tools: "⚖️ search_knowledge_base: 下請法違反判定、独占禁止法ガイドライン照合、リスクアラート、公取委事例検索",
-                usecase: "<strong>💬 ユースケース</strong><br>ユーザー：「原材料費が20%上がったのに、取引先は『価格据え置きで』と言ってくる」<br><br>AI：search_knowledge_baseを直接呼び出し<br>→ 下請法第4条第1項第5号「買いたたき」に該当する可能性が高いと判定<br>→ 公取委の勧告事例を提示し、「通常の対価を大幅に下回る額を定めることは違法」と法的根拠を明示<br>→ 「法律上、適正な価格転嫁を要請する権利がある」という自信を獲得"
-            },
-            check9: {
-                title: "CHECK 9: 必達目標額の決定",
-                purpose: "自社の生存に必要な「最低転嫁額」と「希望転嫁額」を明確化",
-                details: "損益分岐点シミュレーションで「これ以下では赤字」を数値化。松竹梅の3プランを用意し、交渉の落としどころを事前に設定します。",
-                tools: "💰 calculate_cost_impact: 損益分岐点シミュレーション、松竹梅プラン生成、What-If分析、キャッシュフロー影響試算",
-                usecase: "<strong>💬 ユースケース</strong><br>ユーザー：「いくら値上げすればいいのか、正直わからない」<br><br>AI（LLM）：calculate_cost_impactを呼び出し<br>→ 原材料費データと原価構造を統合<br>→ 松: 15%値上げ（希望）、竹: 10%値上げ（標準）、梅: 5%値上げ（最低限）の3プランを生成<br>→ LLMが結果を解釈「梅プランでも利益率3%確保、松プランなら設備投資も可能」とシミュレーション結果を提示<br>→ 交渉の落としどころが明確になり、自信を持って臨める"
-            },
-            step1: {
-                title: "STEP 1: 外堀を埋める（業界・世論の空気作り）",
-                purpose: "「値上げは社会的な要請」という空気を作る",
-                details: "同業他社の値上げニュース、業界団体の声明文を収集。「うちだけじゃない、業界全体の動き」という文脈を作り、心理的抵抗を下げます。",
-                tools: "🔍 web_search: 同業他社の値上げニュース収集、業界団体の声明文検索<br>📊 generate_chart: 業界全体トレンド分析グラフ生成",
-                usecase: "<strong>💬 ユースケース</strong><br>ユーザー：「いよいよ交渉を始めたいけど、『うちだけ』と思われたくない」<br><br>AI（LLM）：web_searchを呼び出し<br>→ 同業他社の値上げニュース（大手3社が平均12%値上げ）を収集<br>→ 業界団体の声明文（「適正な価格転嫁を推奨」）を検索<br>→ LLMがトレンドを分析し、generate_chartで「業界全体で値上げが進んでいる」グラフを生成<br>→ 交渉時に「業界の動きに合わせた対応」として説明可能に"
-            },
-            step2: {
-                title: "STEP 2: ターゲット選定と優先順位付け",
-                purpose: "勝率の高い相手から攻略し、実績を作る",
-                details: "取引先をS/A/B/Cランクに分類。パートナーシップ宣言企業や増益企業から交渉し、成功事例を作って他社への説得材料にします。",
-                tools: "🔍 web_search: 取引先情報収集<br>💰 calculate_cost_impact: 取引先別の影響度試算",
-                usecase: "<strong>💬 ユースケース</strong><br>ユーザー：「5社に値上げ交渉したいけど、どの順番で行くべき？」<br><br>AI（LLM）：web_searchで各社の情報を収集<br>→ LLMが分析してS/A/B/Cランク付け<br>→ A社（Sランク）: パートナーシップ宣言済み、増益 → 1番目<br>→ B社（Aランク）: 宣言なしだが増益 → 2番目<br>→ C社（Cランク）: 減益、厳しい交渉予想 → 5番目<br>→ 「A社で成功事例を作り、『A社も承諾してくれました』とB社以降に伝える戦略」を提案"
-            },
-            step3: {
-                title: "STEP 3: 交渉の申し入れ（アポイントメント）",
-                purpose: "門前払いを回避し、決裁権者との正式な商談時間を確保",
-                details: "丁寧/標準/切実/毅然の4トーンから選択し、相手に応じた申入書を作成。「お願い」ではなく「協議」の姿勢で臨みます。",
-                tools: "📄 generate_document: 価格交渉申入書作成、トーン＆マナー調整（丁寧/標準/切実/毅然）",
-                usecase: "<strong>💬 ユースケース</strong><br>ユーザー：「A社の社長にアポを取りたい。どんな文面がいい？」<br><br>AI（LLM）：A社の特性（パートナーシップ宣言企業）を考慮し、「丁寧」トーンを判断<br>→ 申入書の内容を作成（法的根拠と業界動向を記載）<br>→ generate_documentを呼び出して「価格改定のご協議のお願い」申入書を生成<br>→ 「お願い」ではなく「協議」という対等な姿勢で、決裁権者（社長）との面談を要請<br>→ メール送信後、3日以内に返信がなければフォローアップの提案も"
-            },
-            step4: {
-                title: "STEP 4: 交渉本番",
-                purpose: "準備した資料とロジックを駆使し、納得ずくで値上げを承諾させる",
-                details: "グラフ、試算表、見積書を統合したプレゼン資料で説得。AIロールプレイで練習した想定問答で、あらゆる反論に対応します。",
-                tools: "📄 generate_document: 根拠資料セット統合（グラフ+試算表+見積書）、プレゼン資料生成<br>🎭 simulate_negotiation: 交渉シナリオ作成、想定問答集生成、ロールプレイ訓練",
-                usecase: "<strong>💬 ユースケース</strong><br>ユーザー：「明日がA社との交渉本番...緊張する」<br><br>AI（LLM）：simulate_negotiationを呼び出し<br>→ AIが「A社社長役」を演じるロールプレイを実施<br>→ 「他社に切り替えるぞ」という反論に対し、自社の強み（緊急対応力）で対抗する練習<br>→ LLMがフィードバックと改善点を提示<br>→ プレゼン資料作成フェーズ: generate_documentで資料を自動生成（グラフ、試算表、見積書を統合）<br>→ 想定問答集（10パターン）と評価フィードバックで、自信を持って本番に臨める<br>→ 結果: 10%値上げで合意成立！"
-            },
-            step5: {
-                title: "STEP 5: アフターフォロー & 発注後の微調整",
-                purpose: "合意内容を確実に契約書に落とし込み、スポット案件での取りこぼしを防ぐ",
-                details: "口頭合意を文書化し、仕様変更時の追加見積も即座に生成。「言った言わない」を防ぎ、継続的な適正価格を維持します。",
-                tools: "📄 generate_document: 合意書作成、確定見積書、仕様変更見積書の即時生成",
-                usecase: "<strong>💬 ユースケース</strong><br>ユーザー：「A社と10%値上げで口頭合意したけど、これで終わり？」<br><br>AI（LLM）：合意内容を整理<br>→ generate_documentを呼び出して「価格改定合意書」を自動生成<br>→ 「2025年1月1日より、従来価格の110%で取引する」と明記<br>→ さらに、スポット案件用の「仕様変更見積書」テンプレートも準備<br>→ 今後、「ちょっと仕様変えて」と言われても、即座に追加見積を提示できる体制が整う<br>→ 継続的な適正価格を維持し、取りこぼしを防ぐ"
-            },
             tool1: {
                 title: "🔍 web_search（Web検索ツール）",
                 purpose: "あらゆる外部情報取得の基盤",
@@ -899,7 +669,7 @@
                 tech: "Web Search API<br><strong>LLMの役割</strong>: 検索結果から数値データを抽出・分析、企業をS/A/B/Cランク付け、交渉戦略を提案"
             },
             tool2: {
-                title: "⚖️ search_knowledge_base（法務知識検索ツール）",
+                title: "⚖️ search_knowledge_base（知識検索ツール）",
                 purpose: "法的根拠で交渉を後押し",
                 details: "RAGで下請法、独禁法、価格転嫁ハンドブック、労務費転嫁指針、公取委事例集、原価計算式を検索。「これって違法？」に即答し、買いたたきの判定が可能。法的解釈・適用判断はLLMが担当します。",
                 tech: "RAG (S3 + Vector Search), FAISS/Pinecone, セマンティック検索<br><strong>LLMの役割</strong>: 取得した条文をユーザーの状況に適用、違法性を判定、対抗話法を生成"
@@ -923,7 +693,7 @@
                 tech: "Jinja2 (テンプレートエンジン), python-docx, openpyxl, PDF生成ライブラリ"
             },
             tool6: {
-                title: "⚖️ search_knowledge_base（法務知識検索ツール）",
+                title: "⚖️ search_knowledge_base（知識検索ツール）",
                 purpose: "法的根拠で交渉を後押し",
                 details: "RAGで下請法、独禁法、価格転嫁ハンドブック、労務費転嫁指針、公取委事例集を検索。「これって違法？」に即答し、現在の取引が買いたたきに該当するかを判定。法的根拠を持って交渉に臨め、相手の不当な要求に対抗できます。",
                 tech: "RAG (S3 + Vector Search), LLM (回答生成), セマンティック検索"

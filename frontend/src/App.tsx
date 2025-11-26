@@ -3,6 +3,8 @@ import axios from 'axios'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import './App.css'
+import { ToolModal } from './components/ToolModal'
+import { MODAL_CONFIGS, TOOL_TO_MODAL_MAP, ModalType } from './config/modal-config'
 
 // Viteのプロキシ設定により、相対パスでアクセス
 const API_BASE_URL = ''
@@ -11,13 +13,15 @@ interface Message {
   role: 'user' | 'assistant'
   content: string
   images?: string[]  // Base64画像データの配列
+  pdfs?: string[]    // Base64 PDFデータの配列
 }
 
 interface ChatEvent {
-  type: 'content' | 'tool_use' | 'step_update' | 'mode_update' | 'done' | 'error' | 'status' | 'image'
+  type: 'content' | 'tool_use' | 'step_update' | 'mode_update' | 'done' | 'error' | 'status' | 'image' | 'pdf' | 'show_modal'
   data?: string
   tool?: string
   show_modal?: boolean
+  modal_type?: ModalType
   step?: string
   mode?: string
   confidence?: string
@@ -34,7 +38,6 @@ interface UserInfo {
   companySize?: string
   region?: string
   clientIndustry?: string
-  priceTransferStatus?: string
 }
 
 interface CostAnalysisData {
@@ -66,10 +69,14 @@ function App() {
     current_expenses: ''
   })
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  // 汎用ツールモーダル用のstate
+  const [activeModalType, setActiveModalType] = useState<ModalType | null>(null)
+  const [isModalLoading, setIsModalLoading] = useState(false)
   const [currentStatus, setCurrentStatus] = useState<string>('') // 現在のステータスメッセージ
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const currentResponseRef = useRef<string>('')
   const currentImagesRef = useRef<string[]>([])  // 現在のメッセージに紐づく画像
+  const currentPdfsRef = useRef<string[]>([])    // 現在のメッセージに紐づくPDF
   const abortControllerRef = useRef<AbortController | null>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -84,18 +91,20 @@ function App() {
 
 皆様の価格転嫁をサポートさせていただきます。`
 
-      if (userInfo.industry || userInfo.products) {
-        welcomeContent += `\n\n`
-        if (userInfo.industry) {
-          welcomeContent += `**業種**: ${userInfo.industry}\n`
-        }
-        if (userInfo.products) {
-          welcomeContent += `**主な製品・サービス**: ${userInfo.products}\n`
-        }
-        if (userInfo.region) {
-          welcomeContent += `**地域**: ${userInfo.region}\n`
-        }
-        welcomeContent += `\n上記の情報を踏まえて、より具体的なアドバイスを提供させていただきます。`
+      // 基本情報を整理して表示
+      const infoItems: string[] = []
+      if (userInfo.industry) infoItems.push(`業種: ${userInfo.industry}`)
+      if (userInfo.products) infoItems.push(`主な製品・サービス: ${userInfo.products}`)
+      if (userInfo.companySize) infoItems.push(`従業員規模: ${userInfo.companySize}`)
+      if (userInfo.region) infoItems.push(`地域: ${userInfo.region}`)
+      if (userInfo.clientIndustry) infoItems.push(`取引先の主な業種: ${userInfo.clientIndustry}`)
+      
+      if (infoItems.length > 0) {
+        welcomeContent += `\n\n## 📋 ご登録いただいた基本情報\n\n`
+        infoItems.forEach(item => {
+          welcomeContent += `- ${item}\n`
+        })
+        welcomeContent += `\n上記の情報を踏まえて、より具体的で実践的なアドバイスを提供させていただきます。`
       }
 
       welcomeContent += `
@@ -119,6 +128,17 @@ function App() {
       setMessages([welcomeMessage])
     } catch (error) {
       console.error('セッション初期化エラー:', error)
+      // エラー時もウェルカムメッセージを表示
+      const errorMessage: Message = {
+        role: 'assistant',
+        content: `こんにちは！価格転嫁支援AIアシスタントです。
+
+申し訳ございませんが、セッションの初期化でエラーが発生しました。
+再度お試しください。
+
+どのようなことでお手伝いできますか？`
+      }
+      setMessages([errorMessage])
     }
   }
 
@@ -156,6 +176,7 @@ function App() {
               role: 'assistant',
               content: currentResponseRef.current + '\n\n*[応答が停止されました]*',
               images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
+              pdfs: currentPdfsRef.current.length > 0 ? [...currentPdfsRef.current] : undefined,
             }
           }
           return newMessages
@@ -184,6 +205,7 @@ function App() {
     setIsLoading(true)
     currentResponseRef.current = ''
     currentImagesRef.current = []  // 画像リストをリセット
+    currentPdfsRef.current = []    // PDFリストをリセット
 
     // AbortControllerを作成
     abortControllerRef.current = new AbortController()
@@ -230,14 +252,15 @@ function App() {
 
                 if (event.type === 'content') {
                   currentResponseRef.current = event.data || ''
-                  
+
                   // 最初のcontentイベントでアシスタントメッセージを追加
                   if (!hasAddedAssistantMessage) {
                     hasAddedAssistantMessage = true
-                    setMessages(prev => [...prev, { 
-                      role: 'assistant', 
+                    setMessages(prev => [...prev, {
+                      role: 'assistant',
                       content: currentResponseRef.current,
                       images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
+                      pdfs: currentPdfsRef.current.length > 0 ? [...currentPdfsRef.current] : undefined,
                     }])
                   } else {
                     // 既存のメッセージを更新
@@ -247,6 +270,7 @@ function App() {
                         role: 'assistant',
                         content: currentResponseRef.current,
                         images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
+                        pdfs: currentPdfsRef.current.length > 0 ? [...currentPdfsRef.current] : undefined,
                       }
                       return newMessages
                     })
@@ -255,7 +279,7 @@ function App() {
                   // 画像データを受信
                   if (event.data) {
                     currentImagesRef.current.push(event.data)
-                    
+
                     // メッセージを更新して画像を追加
                     if (hasAddedAssistantMessage) {
                       setMessages(prev => {
@@ -264,6 +288,26 @@ function App() {
                           role: 'assistant',
                           content: currentResponseRef.current,
                           images: [...currentImagesRef.current],
+                          pdfs: currentPdfsRef.current.length > 0 ? [...currentPdfsRef.current] : undefined,
+                        }
+                        return newMessages
+                      })
+                    }
+                  }
+                } else if (event.type === 'pdf') {
+                  // PDFデータを受信
+                  if (event.data) {
+                    currentPdfsRef.current.push(event.data)
+
+                    // メッセージを更新してPDFを追加
+                    if (hasAddedAssistantMessage) {
+                      setMessages(prev => {
+                        const newMessages = [...prev]
+                        newMessages[newMessages.length - 1] = {
+                          role: 'assistant',
+                          content: currentResponseRef.current,
+                          images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
+                          pdfs: [...currentPdfsRef.current],
                         }
                         return newMessages
                       })
@@ -281,27 +325,39 @@ function App() {
                   setCurrentMode(event.mode || null)
                   console.log(`[モード更新] ${event.mode}`)
                 } else if (event.type === 'tool_use') {
-                  // ツール使用中
-                  console.log(`[ツール使用中] ${event.tool}`)
-                  
-                  // analyze_cost_impactツールの場合はモーダルを表示
-                  if (event.tool === 'analyze_cost_impact' && event.show_modal) {
-                    setShowCostAnalysisModal(true)
-                  }
-                } else if (event.type === 'step_update') {
+                                  // ツール使用中
+                                  console.log(`[ツール使用中] ${event.tool}`)
+                                  
+                                  // ツール名からモーダル種別を判定
+                                  if (event.tool && event.show_modal) {
+                                    const modalType = TOOL_TO_MODAL_MAP[event.tool]
+                                    if (modalType) {
+                                      setActiveModalType(modalType)
+                                    } else if (event.tool === 'analyze_cost_impact') {
+                                      // 後方互換性: 既存のモーダル
+                                      setShowCostAnalysisModal(true)
+                                    }
+                                  }
+                                } else if (event.type === 'show_modal') {
+                                  // 直接モーダル表示リクエスト
+                                  if (event.modal_type) {
+                                    setActiveModalType(event.modal_type)
+                                  }
+                                } else if (event.type === 'step_update') {
                   // ステップ更新（後方互換性のため維持）
                   setCurrentStep(event.step || null)
                 } else if (event.type === 'done') {
                   // ステータスをクリア
                   setCurrentStatus('')
-                  
+
                   // アシスタントメッセージがまだ追加されていない場合は追加
                   if (!hasAddedAssistantMessage) {
                     hasAddedAssistantMessage = true
-                    setMessages(prev => [...prev, { 
-                      role: 'assistant', 
+                    setMessages(prev => [...prev, {
+                      role: 'assistant',
                       content: event.content || currentResponseRef.current,
                       images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
+                      pdfs: currentPdfsRef.current.length > 0 ? [...currentPdfsRef.current] : undefined,
                     }])
                   } else {
                     setMessages(prev => {
@@ -310,6 +366,7 @@ function App() {
                         role: 'assistant',
                         content: event.content || currentResponseRef.current,
                         images: currentImagesRef.current.length > 0 ? [...currentImagesRef.current] : undefined,
+                        pdfs: currentPdfsRef.current.length > 0 ? [...currentPdfsRef.current] : undefined,
                       }
                       return newMessages
                     })
@@ -486,6 +543,85 @@ ${diagramData}
     }
   }
 
+  // 汎用ツールモーダルの送信処理
+  const handleToolModalSubmit = async (data: Record<string, number | string>) => {
+    if (!activeModalType) return
+
+    const config = MODAL_CONFIGS[activeModalType]
+    setIsModalLoading(true)
+
+    try {
+      const response = await axios.post(`${API_BASE_URL}${config.apiEndpoint}`, data)
+
+      if (response.data.success) {
+        const result = response.data.result
+
+        // モーダルを閉じる
+        setActiveModalType(null)
+
+        // 結果に基づいてエージェントにメッセージを送信
+        if (activeModalType === 'ideal_pricing') {
+          // 理想の原価計算の結果をフォーマット
+          const scenarios = result.scenarios
+          const recommendation = result.recommendation
+          const costStructure = result.cost_structure
+          const profitAnalysis = result.profit_analysis
+
+          const resultText = `【理想の原価計算 - 分析結果】
+
+【コスト構造の変化】
+- 材料費: ${costStructure.before.material_cost.toLocaleString()}円 → ${costStructure.after.material_cost.toLocaleString()}円 (+${costStructure.changes.material_cost}%)
+- 労務費: ${costStructure.before.labor_cost.toLocaleString()}円 → ${costStructure.after.labor_cost.toLocaleString()}円 (+${costStructure.changes.labor_cost}%)
+- エネルギー費: ${costStructure.before.energy_cost.toLocaleString()}円 → ${costStructure.after.energy_cost.toLocaleString()}円 (+${costStructure.changes.energy_cost}%)
+- その他経費: ${costStructure.before.overhead.toLocaleString()}円 → ${costStructure.after.overhead.toLocaleString()}円 (+${costStructure.changes.overhead}%)
+- **総コスト: ${costStructure.before.total.toLocaleString()}円 → ${costStructure.after.total.toLocaleString()}円 (+${costStructure.total_increase_rate.toFixed(1)}%)**
+
+【利益への影響】
+- 現在の売上高: ${profitAnalysis.current_sales.toLocaleString()}円
+- コスト高騰前の利益率: ${profitAnalysis.before_profit_rate.toFixed(1)}%
+- 価格据え置き時の利益率: ${profitAnalysis.after_profit_rate_if_unchanged.toFixed(1)}%
+
+【価格改定シナリオ（松竹梅）】
+🌟 **${scenarios.premium.name}**
+   - 目標価格: ${Math.round(scenarios.premium.target_price).toLocaleString()}円（+${scenarios.premium.price_increase_rate.toFixed(1)}%）
+   - 利益率: ${scenarios.premium.profit_margin.toFixed(1)}%
+   - ${scenarios.premium.description}
+
+✅ **${scenarios.standard.name}**
+   - 目標価格: ${Math.round(scenarios.standard.target_price).toLocaleString()}円（+${scenarios.standard.price_increase_rate.toFixed(1)}%）
+   - 利益率: ${scenarios.standard.profit_margin.toFixed(1)}%
+   - ${scenarios.standard.description}
+
+⚡ **${scenarios.minimum.name}**
+   - 目標価格: ${Math.round(scenarios.minimum.target_price).toLocaleString()}円（+${scenarios.minimum.price_increase_rate.toFixed(1)}%）
+   - 利益率: ${scenarios.minimum.profit_margin.toFixed(1)}%
+   - ${scenarios.minimum.description}
+
+【推奨】
+緊急度: ${recommendation.urgency === 'high' ? '🚨 高' : recommendation.urgency === 'medium' ? '⚠️ 中' : '📝 低'}
+${recommendation.urgency_message}
+推奨シナリオ: ${scenarios[recommendation.recommended_scenario].name}`
+
+          // エージェントに要約を依頼
+          const agentRequest = `理想の原価計算ツールで分析しました。以下の分析結果を要約して、ユーザーに分かりやすく説明してください。また、必要に応じてグラフ化も検討してください。
+
+${resultText}`
+
+          setTimeout(() => {
+            handleSend(agentRequest, true)
+          }, 300)
+        }
+      } else {
+        alert(`エラー: ${response.data.message}`)
+      }
+    } catch (error: any) {
+      console.error('ツールモーダルエラー:', error)
+      alert(`エラーが発生しました: ${error.response?.data?.message || error.message}`)
+    } finally {
+      setIsModalLoading(false)
+    }
+  }
+
   const handleClear = async () => {
     if (!sessionId) return
 
@@ -653,23 +789,6 @@ ${diagramData}
               />
             </div>
 
-            <div className="form-group">
-              <label htmlFor="priceTransferStatus">現在の価格転嫁の状況</label>
-              <select
-                id="priceTransferStatus"
-                value={userInfo.priceTransferStatus || ''}
-                onChange={(e) => setUserInfo({ ...userInfo, priceTransferStatus: e.target.value || undefined })}
-                className="form-input"
-              >
-                <option value="">選択してください</option>
-                <option value="検討中">検討中</option>
-                <option value="準備中">準備中</option>
-                <option value="交渉中">交渉中</option>
-                <option value="実施済み">実施済み</option>
-                <option value="その他">その他</option>
-              </select>
-            </div>
-
             <div className="modal-buttons">
               <button onClick={handleUserInfoSubmit} className="submit-button">
                 登録して開始
@@ -700,11 +819,36 @@ ${diagramData}
             const isLastMessage = idx === messages.length - 1
             const isAssistantLoading = isLastMessage && msg.role === 'assistant' && isLoading
             
+            // メッセージ内からPDFファイル名を抽出
+            const pdfFileMatches = msg.content.match(/\[PDF_FILE\](.*?)\[\/PDF_FILE\]/g) || []
+            const pdfFilenames = pdfFileMatches.map(m => m.replace(/\[PDF_FILE\]|\[\/PDF_FILE\]/g, '').trim())
+            
+            // [PDF_FILE]タグがない場合、.pdfで終わるファイル名を検出（バックアップ）
+            if (pdfFilenames.length === 0 && msg.content.includes('.pdf')) {
+              const backupMatches = msg.content.match(/[a-zA-Z0-9_\-\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]+\.pdf/g)
+              if (backupMatches) {
+                pdfFilenames.push(...backupMatches)
+              }
+            }
+            
+            // PDFが生成されたかチェック（複数のパターンに対応）
+            const hasPdfGenerated = 
+              msg.content.includes('PDFを生成しました') || 
+              msg.content.includes('PDF生成') ||
+              msg.content.includes('ドキュメントを作成') ||
+              msg.content.includes('文書を作成') ||
+              (msg.content.includes('完成しました') && msg.content.includes('ドキュメント')) ||
+              (msg.content.includes('作成いたしました') && msg.content.includes('ドキュメント')) ||
+              msg.content.includes('generate_document')
+            
+            // 表示用にタグを除去したコンテンツ
+            const displayContent = msg.content.replace(/\[PDF_FILE\].*?\[\/PDF_FILE\]/g, '').trim()
+            
             return (
               <div key={idx}>
                 <div className={`message ${msg.role}`}>
                   <div className="message-content">
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{msg.content}</ReactMarkdown>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayContent}</ReactMarkdown>
                     {isAssistantLoading && currentStatus && (
                       <div className="status-message">
                         {currentStatus}
@@ -719,13 +863,134 @@ ${diagramData}
                       <div className="message-images">
                         {msg.images.map((imgData, imgIdx) => (
                           <div key={imgIdx} className="chart-image-container">
-                            <img 
-                              src={`data:image/png;base64,${imgData}`} 
-                              alt={`生成されたグラフ ${imgIdx + 1}`} 
+                            <img
+                              src={`data:image/png;base64,${imgData}`}
+                              alt={`生成されたグラフ ${imgIdx + 1}`}
                               className="chart-image"
                             />
                           </div>
                         ))}
+                      </div>
+                    )}
+                    {/* このメッセージに紐づくPDFを表示 */}
+                    {msg.pdfs && msg.pdfs.length > 0 && (
+                      <div className="message-pdfs">
+                        {msg.pdfs.map((pdfData, pdfIdx) => {
+                          const blob = new Blob([Uint8Array.from(atob(pdfData), c => c.charCodeAt(0))], { type: 'application/pdf' })
+                          const url = URL.createObjectURL(blob)
+                          return (
+                            <div key={pdfIdx} style={{ marginTop: '12px', display: 'flex', gap: '8px' }}>
+                              <a
+                                href={url}
+                                download={`document_${idx}_${pdfIdx}.pdf`}
+                                style={{
+                                  display: 'inline-block',
+                                  padding: '8px 16px',
+                                  backgroundColor: '#555',
+                                  color: 'white',
+                                  textDecoration: 'none',
+                                  borderRadius: '4px',
+                                  fontSize: '14px'
+                                }}
+                              >
+                                ダウンロード
+                              </a>
+                              <a
+                                href={url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{
+                                  display: 'inline-block',
+                                  padding: '8px 16px',
+                                  backgroundColor: 'transparent',
+                                  color: '#555',
+                                  textDecoration: 'none',
+                                  borderRadius: '4px',
+                                  fontSize: '14px',
+                                  border: '1px solid #999'
+                                }}
+                              >
+                                プレビュー
+                              </a>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )}
+                    {/* ファイル名から検出したPDFのダウンロードボタン */}
+                    {pdfFilenames.length > 0 && (
+                      <div className="message-pdfs" style={{ marginTop: '12px' }}>
+                        {pdfFilenames.map((filename, pdfIdx) => (
+                          <div key={pdfIdx} style={{ marginTop: '8px', display: 'flex', gap: '8px' }}>
+                            <a
+                              href={`${API_BASE_URL}/api/documents/${filename}`}
+                              download={filename}
+                              style={{
+                                display: 'inline-block',
+                                padding: '8px 16px',
+                                backgroundColor: '#555',
+                                color: 'white',
+                                textDecoration: 'none',
+                                borderRadius: '4px',
+                                fontSize: '14px'
+                              }}
+                            >
+                              ダウンロード
+                            </a>
+                            <a
+                              href={`${API_BASE_URL}/api/documents/${filename}/preview`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{
+                                display: 'inline-block',
+                                padding: '8px 16px',
+                                backgroundColor: 'transparent',
+                                color: '#555',
+                                textDecoration: 'none',
+                                borderRadius: '4px',
+                                fontSize: '14px',
+                                border: '1px solid #999'
+                              }}
+                            >
+                              プレビュー
+                            </a>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {/* 「PDFを生成しました」が含まれているが、ファイル名が検出できない場合 */}
+                    {hasPdfGenerated && pdfFilenames.length === 0 && !isAssistantLoading && (
+                      <div className="message-pdfs" style={{ marginTop: '12px' }}>
+                        <button
+                          onClick={async () => {
+                            try {
+                              const res = await axios.get(`${API_BASE_URL}/api/documents`)
+                              const docs = res.data.documents
+                              if (docs.length === 0) {
+                                alert('PDFが見つかりませんでした')
+                                return
+                              }
+                              // 最新のPDFをダウンロード
+                              const link = document.createElement('a')
+                              link.href = `${API_BASE_URL}/api/documents/${docs[0].filename}`
+                              link.download = docs[0].filename
+                              link.click()
+                            } catch (e) {
+                              alert('PDFの取得に失敗しました')
+                            }
+                          }}
+                          style={{
+                            padding: '8px 16px',
+                            backgroundColor: '#555',
+                            color: 'white',
+                            border: 'none',
+                            borderRadius: '4px',
+                            fontSize: '14px',
+                            cursor: 'pointer'
+                          }}
+                        >
+                          PDFをダウンロード
+                        </button>
                       </div>
                     )}
                   </div>
@@ -915,6 +1180,17 @@ ${diagramData}
             </div>
           </div>
         </div>
+      )}
+
+      {/* 汎用ツールモーダル */}
+      {activeModalType && MODAL_CONFIGS[activeModalType] && (
+        <ToolModal
+          config={MODAL_CONFIGS[activeModalType]}
+          isOpen={true}
+          onClose={() => setActiveModalType(null)}
+          onSubmit={handleToolModalSubmit}
+          isLoading={isModalLoading}
+        />
       )}
     </div>
   )

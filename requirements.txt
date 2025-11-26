@@ -21,6 +21,11 @@ numpy
 pandas
 pillow
 
+# Document generation
+reportlab
+python-docx
+openpyxl
+
 # FastAPI backend
 fastapi
 uvicorn[standard]

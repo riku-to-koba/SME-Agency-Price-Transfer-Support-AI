@@ -12,6 +12,16 @@ from agent.orchestrator import OrchestratorAgent
 # イベントループのネストを許可
 nest_asyncio.apply()
 
+# ツール名の日本語マッピング
+TOOL_NAME_JA = {
+    "web_search": "Web検索",
+    "search_knowledge_base": "知識ベース検索",
+    "calculate_cost_impact": "コスト影響試算",
+    "generate_chart": "グラフ生成",
+    "generate_document": "文書生成",
+    "simulate_negotiation": "交渉シミュレーション",
+}
+
 # オーケストレーターをセッション単位で保持
 if "orchestrator" not in st.session_state:
     st.session_state.orchestrator = OrchestratorAgent()
@@ -100,7 +110,8 @@ if prompt := st.chat_input("メッセージを入力してください"):
                     # ツール使用ステータス
                     if "current_tool_use" in event and event["current_tool_use"].get("name"):
                         tool_name = event["current_tool_use"]["name"]
-                        response_placeholder.markdown(f"{full_response}\n\n*[{tool_name} を使用中]*")
+                        tool_name_ja = TOOL_NAME_JA.get(tool_name, tool_name)
+                        response_placeholder.markdown(f"{full_response}\n\n*[{tool_name_ja}を実行中...]*")
                         continue
 
                     # ツール結果はステータスのみリセット

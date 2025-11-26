@@ -292,3 +292,5 @@ def simulate_negotiation(
         traceback.print_exc()
         return f"❌ シミュレーション中にエラーが発生しました: {str(e)}"
 
+
+
