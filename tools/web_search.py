@@ -23,8 +23,6 @@ def is_trusted_source_ai(url: str, title: str, content: str) -> dict:
         }
     """
     try:
-        print(f"\n🔍 [AI信頼性判定] URL: {url}")
-
         # AWSプロファイルを使用してセッションを作成
         session = boto3.Session(profile_name='bedrock_use_only')
 
@@ -112,12 +110,9 @@ source_type は以下から選択：
                 if error_code == 'ThrottlingException':
                     if attempt < max_retries - 1:
                         wait_time = retry_delay * (2 ** attempt)  # 指数バックオフ
-                        print(f"⚠️  [AI信頼性判定] レート制限エラー (試行 {attempt + 1}/{max_retries})")
-                        print(f"⏳ {wait_time}秒待機してから再試行します...")
                         time.sleep(wait_time)
                         continue
                     else:
-                        print(f"❌ [AI信頼性判定] 最大リトライ回数に達しました")
                         raise
                 else:
                     # ThrottlingException以外のエラーは即座に再スロー
@@ -139,14 +134,9 @@ source_type は以下から選択：
 
         result = json.loads(result_json.strip())
 
-        print(f"✅ 判定結果: {'信頼できる' if result.get('is_trusted') else '信頼できない'}")
-        print(f"   理由: {result.get('reasoning', '不明')}")
-        print(f"   種類: {result.get('source_type', 'unknown')}\n")
-
         return result
 
     except Exception as e:
-        print(f"❌ [AI信頼性判定エラー] {str(e)}")
         # エラー時は安全側（信頼できない）に倒す
         return {
             "is_trusted": False,
@@ -170,30 +160,21 @@ def web_search(query: str, max_results: int = 5) -> str:
         import os
         from tavily import TavilyClient
 
-        print(f"\n{'='*80}")
-        print(f"🔍 [Web検索] 検索クエリ: {query}")
-        print(f"{'='*80}\n")
-
         # 環境変数からAPIキーを取得（デプロイ時に設定）
         api_key = os.environ.get("TAVILY_API_KEY", "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")
         tavily_client = TavilyClient(api_key=api_key)
 
         # より多めに検索して、フィルタリング後に十分な結果を確保
-        print(f"🌐 Tavily APIで検索中...")
         response = tavily_client.search(
             query=query,
             max_results=max_results * 2,  # AI判定するため多めに取得
             search_depth="advanced",
             include_answer=True,
         )
-        print(f"✅ {len(response.get('results', []))}件の検索結果を取得\n")
 
         # AIを使って各結果の信頼性を判定
         filtered_results = []
-        trusted_count = 0
-        untrusted_count = 0
 
-        print(f"🔍 フィルタリング中...")
         for result in response.get("results", []):
             url = result.get('url', '')
             title = result.get('title', '')
@@ -206,16 +187,9 @@ def web_search(query: str, max_results: int = 5) -> str:
                 # 信頼性情報を結果に追加
                 result['trust_info'] = trust_result
                 filtered_results.append(result)
-                trusted_count += 1
 
                 if len(filtered_results) >= max_results:
                     break
-            else:
-                untrusted_count += 1
-                print(f"⚠️  除外: {url}")
-                print(f"   理由: {trust_result.get('reasoning', '不明')}\n")
-
-        print(f"\n📊 フィルタリング結果: 信頼できる {trusted_count}件 / 除外 {untrusted_count}件\n")
 
         # 結果テキストを構築
         result_text = f"【検索クエリ】: {query}\n\n"
@@ -258,5 +232,4 @@ def web_search(query: str, max_results: int = 5) -> str:
 
         return result_text
     except Exception as e:
-        print(f"❌ [Web検索エラー] {str(e)}")
         return f"検索エラー: {str(e)}"

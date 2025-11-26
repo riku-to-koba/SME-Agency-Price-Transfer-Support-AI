@@ -90,7 +90,7 @@ function App() {
       setSessionId(response.data.session_id)
       
       // ウェルカムメッセージ（ユーザー情報に基づいてカスタマイズ）
-      let welcomeContent = `こんにちは！中小企業経営サポートAIです。
+      let welcomeContent = `こんにちは！中小企業価格転嫁サポートAIです。
 
 資金繰り、人材、販路拡大、価格交渉、事業承継…
 経営のお悩み、どんなことでも気軽にご相談ください。`
@@ -135,7 +135,7 @@ function App() {
       // エラー時もウェルカムメッセージを表示
       const errorMessage: Message = {
         role: 'assistant',
-        content: `こんにちは！中小企業経営サポートAIです。
+        content: `こんにちは！中小企業価格転嫁サポートAIです。
 
 申し訳ございませんが、セッションの初期化でエラーが発生しました。
 再度お試しください。
@@ -770,7 +770,7 @@ ${resultText}`
       // ウェルカムメッセージを再表示
       const welcomeMessage: Message = {
         role: 'assistant',
-        content: `こんにちは！中小企業経営サポートAIです。
+        content: `こんにちは！中小企業価格転嫁サポートAIです。
 
 資金繰り、人材、販路拡大、価格交渉、事業承継…
 経営のお悩み、どんなことでも気軽にご相談ください。
@@ -937,7 +937,7 @@ ${resultText}`
       )}
 
       <header className="app-header">
-        <h1>中小企業経営サポートAI</h1>
+        <h1>中小企業価格転嫁サポートAI</h1>
         <div className="header-controls">
           {currentMode && (
             <div className={`mode-badge ${currentMode}`}>

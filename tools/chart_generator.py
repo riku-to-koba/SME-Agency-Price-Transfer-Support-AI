@@ -185,12 +185,6 @@ def generate_chart(
         str: 生成結果のメッセージ（ファイルパスとBase64画像データを含む特殊フォーマット）
     """
     try:
-        print(f"\n{'='*60}")
-        print(f"📊 [generate_chart] グラフ生成開始")
-        print(f"   タイプ: {chart_type}")
-        print(f"   タイトル: {title}")
-        print(f"{'='*60}\n")
-
         # グラフを生成してファイル保存 + Base64エンコード
         filepath, image_base64 = _generate_chart_file(
             data=data,
@@ -200,14 +194,9 @@ def generate_chart(
             y_label=y_label
         )
 
-        print(f"✅ グラフ生成成功")
-        print(f"   保存先: {filepath}")
-
         # ファイル名を抽出（URLとして使用）
         filename = os.path.basename(filepath)
         chart_url = f"/charts/{filename}"
-        
-        print(f"   📌 画像URL: {chart_url}")
 
         # 特殊フォーマットで返す（URLタグを使用）
         return f"""✅ グラフを生成しました
@@ -218,7 +207,4 @@ def generate_chart(
 [CHART_URL]{chart_url}[/CHART_URL]"""
 
     except Exception as e:
-        print(f"❌ エラー: {str(e)}")
-        import traceback
-        traceback.print_exc()
         return f"❌ グラフ生成中にエラーが発生しました: {str(e)}"

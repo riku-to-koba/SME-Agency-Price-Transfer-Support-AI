@@ -47,10 +47,6 @@ def calculate_cost_impact() -> str:
     Returns:
         str: モーダル表示を促すメッセージ
     """
-    print(f"\n{'='*60}")
-    print(f"📊 [calculate_cost_impact] 原価計算ツールを起動")
-    print(f"   → ユーザーに入力フォームを表示します")
-    print(f"{'='*60}\n")
     
     # 短いメッセージのみ返す（モーダル表示後はAI出力を止める）
     # 戻り値に「出力終了」を明示して、LLMがこれ以上喋らないようにする

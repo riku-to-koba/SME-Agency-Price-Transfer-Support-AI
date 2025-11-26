@@ -260,9 +260,8 @@ def extract_chart_image_from_path(text: str) -> tuple[str, list[str]]:
                         image_bytes = f.read()
                         image_base64 = base64.b64encode(image_bytes).decode('utf-8')
                         images.append(image_base64)
-                        print(f"[DEBUG] Loaded image from file: {full_path}, size: {len(image_base64)}")
-                except Exception as e:
-                    print(f"[DEBUG] Failed to load image from {full_path}: {e}")
+                except Exception:
+                    pass
     
     return text, images
 
@@ -405,18 +404,14 @@ async def chat_endpoint(request: ChatMessage):
         # initial thinking signal
         yield f"data: {json.dumps({'type': 'status', 'status': 'thinking', 'message': '思考中...'}, ensure_ascii=False)}\n\n"
 
-        try:
-            async for event in orchestrator.stream(session, request.message):
-                # デバッグ: イベント構造を確認（本番では削除可能）
-                print(f"[DEBUG] Event received: {list(event.keys()) if isinstance(event, dict) else type(event)}")
-                
-                # 任意のイベントから画像を再帰的に抽出
-                event_images = extract_images_from_event(event)
-                for img in event_images:
-                    if img not in sent_images:
-                        sent_images.append(img)
-                        print(f"[DEBUG] Sending image event, size: {len(img)}")
-                        yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
+            try:
+                async for event in orchestrator.stream(session, request.message):
+                    # 任意のイベントから画像を再帰的に抽出
+                    event_images = extract_images_from_event(event)
+                    for img in event_images:
+                        if img not in sent_images:
+                            sent_images.append(img)
+                            yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
 
                 # PDFファイルを抽出（イベント全体を文字列化して検索）
                 event_str = json.dumps(event, ensure_ascii=False, default=str) if isinstance(event, dict) else str(event)
@@ -454,10 +449,6 @@ async def chat_endpoint(request: ChatMessage):
                         tool_result_str = json.dumps(tool_result, ensure_ascii=False, default=str)
                     else:
                         tool_result_str = str(tool_result)
-                    
-                    print(f"[DEBUG] Tool result received, length: {len(tool_result_str)}")
-                    print(f"[DEBUG] Contains CHART_IMAGE: {'[CHART_IMAGE]' in tool_result_str}")
-                    print(f"[DEBUG] Contains CHART_URL: {'[CHART_URL]' in tool_result_str}")
 
                     # モーダルトリガーを検出した場合、フラグを立てる
                     if "[COST_MODAL_TRIGGER]" in tool_result_str:
@@ -484,11 +475,8 @@ async def chat_endpoint(request: ChatMessage):
                     for chart_url in chart_urls:
                         if chart_url not in sent_chart_urls:
                             sent_chart_urls.add(chart_url)
-                            print(f"[DEBUG] 📊 Found CHART_URL in tool_result: {chart_url}")
                             # [CHART_URL]タグを含むコンテンツを直接送信
-                            # これによりフロントエンドが画像を表示できる
                             chart_tag = f"\n\n[CHART_URL]{chart_url}[/CHART_URL]"
-                            # full_responseに追加しておく（LLMが削除した場合のバックアップ）
                             full_response += chart_tag
                             yield f"data: {json.dumps({'type': 'content', 'data': chart_tag}, ensure_ascii=False)}\n\n"
 
@@ -497,7 +485,6 @@ async def chat_endpoint(request: ChatMessage):
                     for img in tool_images:
                         if img not in sent_images:
                             sent_images.append(img)
-                            print(f"[DEBUG] Sending image from tool_result (CHART_IMAGE tag), size: {len(img)}")
                             yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
                     
                     # ファイルパスから画像を読み込む（フォールバック）
@@ -505,7 +492,6 @@ async def chat_endpoint(request: ChatMessage):
                     for img in file_images:
                         if img not in sent_images:
                             sent_images.append(img)
-                            print(f"[DEBUG] Sending image from file path, size: {len(img)}")
                             yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
 
                     yield f"data: {json.dumps({'type': 'status', 'status': 'thinking', 'message': '思考中...'}, ensure_ascii=False)}\n\n"
@@ -532,7 +518,6 @@ async def chat_endpoint(request: ChatMessage):
                     for img in file_images:
                         if img not in sent_images:
                             sent_images.append(img)
-                            print(f"[DEBUG] Sending image from file path in content, size: {len(img)}")
                             yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
 
                     # PDFファイルを抽出（ファイル名で重複チェック）
@@ -574,7 +559,6 @@ async def chat_endpoint(request: ChatMessage):
                 try:
                     from tools.chart_generator import LAST_GENERATED_CHARTS
                     if LAST_GENERATED_CHARTS:
-                        print(f"[DEBUG] 🖼️ LAST_GENERATED_CHARTS から {len(LAST_GENERATED_CHARTS)} 件の画像を送信")
                         for chart_path in LAST_GENERATED_CHARTS:
                             chart_file = Path(project_root) / chart_path
                             if chart_file.exists():
@@ -585,25 +569,19 @@ async def chat_endpoint(request: ChatMessage):
                                         image_base64 = base64.b64encode(image_bytes).decode('utf-8')
                                         if image_base64 not in sent_images:
                                             sent_images.append(image_base64)
-                                            print(f"[DEBUG] ✅ グラフ画像を送信: {chart_path}, size: {len(image_base64)}")
                                             yield f"data: {json.dumps({'type': 'image', 'data': image_base64}, ensure_ascii=False)}\n\n"
-                                except Exception as e:
-                                    print(f"[DEBUG] ❌ 画像読み込みエラー: {e}")
-                            else:
-                                print(f"[DEBUG] ⚠️ ファイルが存在しません: {chart_file}")
-                        # クリア
+                                except Exception:
+                                    pass
                         LAST_GENERATED_CHARTS.clear()
-                except Exception as e:
-                    print(f"[DEBUG] グラフ送信エラー: {e}")
+                except Exception:
+                    pass
 
                 # ========== 確実にPDFを送信 ==========
                 # グローバル変数からPDFファイルパスを取得して確実に送信
                 try:
                     from tools.document_generator import LAST_GENERATED_PDFS
                     if LAST_GENERATED_PDFS:
-                        print(f"[DEBUG] 📄 LAST_GENERATED_PDFS から {len(LAST_GENERATED_PDFS)} 件のPDFを送信")
                         for pdf_path in LAST_GENERATED_PDFS:
-                            # 絶対パスか相対パスかを判定
                             pdf_file = Path(pdf_path)
                             if not pdf_file.is_absolute():
                                 pdf_file = Path(project_root) / pdf_path
@@ -617,16 +595,12 @@ async def chat_endpoint(request: ChatMessage):
                                         filename = pdf_file.name
                                         if filename not in sent_pdf_filenames:
                                             sent_pdf_filenames.add(filename)
-                                            print(f"[DEBUG] ✅ PDFを送信: {pdf_path}")
                                             yield f"data: {json.dumps({'type': 'pdf', 'data': pdf_base64}, ensure_ascii=False)}\n\n"
-                                except Exception as e:
-                                    print(f"[DEBUG] ❌ PDF読み込みエラー: {e}")
-                            else:
-                                print(f"[DEBUG] ⚠️ PDFファイルが存在しません: {pdf_file}")
-                        # クリア
+                                except Exception:
+                                    pass
                         LAST_GENERATED_PDFS.clear()
-                except Exception as e:
-                    print(f"[DEBUG] PDF送信エラー: {e}")
+                except Exception:
+                    pass
 
                 # 最終的なテキストから画像を抽出（タグは保持）
                 clean_text, images = extract_chart_images(full_response)
@@ -655,7 +629,6 @@ async def chat_endpoint(request: ChatMessage):
                 for img in final_file_images:
                     if img not in sent_images:
                         sent_images.append(img)
-                        print(f"[DEBUG] Sending image from file path (final), size: {len(img)}")
                         yield f"data: {json.dumps({'type': 'image', 'data': img}, ensure_ascii=False)}\n\n"
 
                 if display_response:
@@ -673,13 +646,6 @@ async def chat_endpoint(request: ChatMessage):
     )
 
 
-@app.post("/api/ideal-pricing-debug")
-async def ideal_pricing_debug(request: dict):
-    """デバッグ用：リクエストボディを確認"""
-    print(f"[DEBUG] Raw request body: {request}")
-    return {"received": request}
-
-
 @app.post("/api/ideal-pricing", response_model=IdealPricingResponse)
 async def ideal_pricing_endpoint(request: IdealPricingRequest):
     """理想の原価計算 - 「去年 vs 今年」方式で松竹梅プランを算出
@@ -687,8 +653,6 @@ async def ideal_pricing_endpoint(request: IdealPricingRequest):
     上昇率は「以前」と「現在」の金額から自動計算される。
     空欄の項目は業界平均で補完される。
     """
-    # デバッグログ
-    print(f"[DEBUG] Received request: {request}")
     try:
         # 業界平均の上昇率（空欄時のデフォルト値）
         DEFAULT_INCREASE_RATES = {

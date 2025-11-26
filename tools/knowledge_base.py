@@ -18,7 +18,6 @@ def search_knowledge_base(query: str, max_results: int = 5) -> str:
         str: 検索結果のフォーマット済みテキスト
     """
     try:
-        print(f"Start search in Knowledge Base for query: {query}")
         knowledge_base_id = 'SIILIHIPRU'
         region = 'ap-northeast-1'
 
@@ -63,12 +62,9 @@ def search_knowledge_base(query: str, max_results: int = 5) -> str:
                 if error_code == 'ThrottlingException':
                     if attempt < max_retries - 1:
                         wait_time = retry_delay * (2 ** attempt)  # 指数バックオフ
-                        print(f"⚠️  [Knowledge Base] レート制限エラー (試行 {attempt + 1}/{max_retries})")
-                        print(f"⏳ {wait_time}秒待機してから再試行します...")
                         time.sleep(wait_time)
                         continue
                     else:
-                        print(f"❌ [Knowledge Base] 最大リトライ回数に達しました")
                         raise
                 else:
                     # ThrottlingException以外のエラーは即座に再スロー
@@ -120,8 +116,6 @@ def search_knowledge_base(query: str, max_results: int = 5) -> str:
             }
             results.append(result_info)
 
-        print(f"finish search in Knowledge Base, found {len(results)} results.")
-
         # フォーマット済みテキストとして返す
         formatted_text = f"【Knowledge Base検索結果】\n"
         formatted_text += f"検索クエリ: {query}\n"
@@ -135,13 +129,6 @@ def search_knowledge_base(query: str, max_results: int = 5) -> str:
             if result['source']['uri']:
                 formatted_text += f"URI: {result['source']['uri']}\n"
             formatted_text += "\n"
-
-        # 検索結果をログに出力
-        print("\n" + "="*80)
-        print("📚 [Knowledge Base検索結果ログ]")
-        print("="*80)
-        print(formatted_text)
-        print("="*80 + "\n")
 
         return formatted_text
 

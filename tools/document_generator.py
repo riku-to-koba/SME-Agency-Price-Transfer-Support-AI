@@ -537,14 +537,6 @@ def generate_document(
     - ヘッダー・フッターに作成日とページ番号が自動付与されます
     """
     try:
-        print(f"\n{'='*60}")
-        print(f"📄 [generate_document] プロフェッショナルPDF生成開始")
-        print(f"   タイトル: {title}")
-        print(f"   文書種別: {document_type}")
-        print(f"   会社名: {company_name or '(未指定)'}")
-        print(f"   文字数: {len(content)}文字")
-        print(f"{'='*60}\n")
-
         if not content or not content.strip():
             return "❌ エラー: 文書内容（content）が空です。PDF化する内容を指定してください。"
 
@@ -562,13 +554,9 @@ def generate_document(
         file_size = os.path.getsize(filepath)
         filename = os.path.basename(filepath)
 
-        print(f"✅ プロフェッショナルPDF生成成功: {filepath}")
-        print(f"   ファイルサイズ: {file_size} bytes")
-
         # グローバルリストにパスを追加（バックエンドから参照可能）
         global LAST_GENERATED_PDFS
         LAST_GENERATED_PDFS.append(filepath)
-        print(f"   グローバルリストに追加: {filepath}")
 
         # ファイルパスをタグで返す（バックエンドがBase64変換してフロントエンドに送信）
         return f"""✅ ビジネス文書PDFを生成しました
@@ -592,7 +580,6 @@ def generate_document(
 PDFファイルが正常に生成されました。ダウンロードボタンからダウンロードできます。"""
 
     except ImportError as e:
-        print(f"❌ エラー: {str(e)}")
         return f"""❌ エラー: reportlab がインストールされていません
 
 PDFを生成するには以下のコマンドを実行してください:
@@ -603,7 +590,4 @@ pip install reportlab
 エラー詳細: {str(e)}"""
 
     except Exception as e:
-        print(f"❌ エラー: {str(e)}")
-        import traceback
-        traceback.print_exc()
         return f"❌ PDF生成中にエラーが発生しました: {str(e)}"

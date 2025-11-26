@@ -207,12 +207,6 @@ def simulate_negotiation(
       )
     """
     try:
-        print(f"\n{'='*60}")
-        print(f"🎭 [simulate_negotiation] 交渉シミュレーション")
-        print(f"   ペルソナ: {opponent_persona}")
-        print(f"   ユーザー発言: {user_response[:50]}...")
-        print(f"{'='*60}\n")
-        
         # ペルソナを検証
         if opponent_persona not in PERSONAS:
             return f"""❌ 無効なペルソナです: {opponent_persona}
@@ -282,14 +276,9 @@ def simulate_negotiation(
 *シミュレーションを続ける場合は、相手の発言に対する返答を入力してください。*
 *終了する場合は「終了」または「ありがとうございました」と入力してください。*"""
         
-        print(f"✅ シミュレーション完了 - スコア: {evaluation['score']}点")
-        
         return result
         
     except Exception as e:
-        print(f"❌ エラー: {str(e)}")
-        import traceback
-        traceback.print_exc()
         return f"❌ シミュレーション中にエラーが発生しました: {str(e)}"
 
 
